@@ -24,13 +24,13 @@ def _submit(sql):
         ts = str(int(time.time()))
         sign = generate_sign({
             "_key": config.DATA_API_KEY,
-            "api_name": "mfa_data",
+            "api_name": config.DATA_API_API_NAME,
             "api_params": api_params,
             "client_id": config.DATA_API_CLIENT_ID,
             "timestamp": ts,
         })
         payload = {
-            "api_name": "mfa_data",
+            "api_name": config.DATA_API_API_NAME,
             "api_params": api_params,
             "client_id": config.DATA_API_CLIENT_ID,
             "timestamp": ts,
@@ -52,16 +52,18 @@ def _submit(sql):
 
 def _download_rows(task_id, max_rows):
     """Download TSV result, parse into list[dict], truncate at max_rows."""
+    # Download API expects api_params=url-quoted json with task_id (same pattern as PrestoUtils.py)
+    api_params = urllib.parse.quote(json.dumps({"task_id": task_id}))
     ts = str(int(time.time()))
     sign = generate_sign({
         "_key": config.DATA_API_KEY,
+        "api_params": api_params,
         "client_id": config.DATA_API_CLIENT_ID,
-        "task_id": task_id,
         "timestamp": ts,
     })
     payload = {
         "client_id": config.DATA_API_CLIENT_ID,
-        "task_id": task_id,
+        "api_params": api_params,
         "timestamp": ts,
         "sign": sign,
     }

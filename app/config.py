@@ -59,6 +59,7 @@ CHANNEL_ALIASES = _get("channels.aliases", {})
 # Data API
 DATA_API_CLIENT_ID = str(_get("data_api.client_id", ""))
 DATA_API_KEY = _get("data_api.key", "")
+DATA_API_API_NAME = _get("data_api.api_name", "mfa_data")
 DATA_API_SEARCH_URL = _get("data_api.search_url", "http://data-api.dc.uuzu.com/search/")
 DATA_API_DOWNLOAD_URL = _get("data_api.download_url", "http://data-api.download.dc.uuzu.com/download/")
 DATA_API_MAX_ROWS = int(_get("data_api.max_rows", 10000))
