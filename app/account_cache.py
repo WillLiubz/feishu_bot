@@ -71,8 +71,8 @@ def refresh():
             finally:
                 conn.close()
         _last_refresh = time.time()
-    except Exception:
-        pass  # Warehouse unavailable; keep using existing cache
+    except Exception as e:
+        print(f"[account_cache] refresh failed (using cached data): {e}")
     finally:
         _refreshing = False
 

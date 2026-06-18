@@ -26,7 +26,7 @@ def _get(path, default=None):
 
 
 def check():
-    """Validate required fields at startup. Checks: feishu credentials, game_id, data_api credentials."""
+    """Validate required fields at startup. Checks: feishu credentials, game_id, data_api credentials, report table names."""
     missing = []
     for field in ["feishu.app_id", "feishu.app_secret", "game.game_id",
                   "data_api.client_id", "data_api.key"]:
@@ -35,6 +35,13 @@ def check():
             missing.append(field)
     if missing:
         raise ValueError(f"config.json 缺少必填项: {', '.join(missing)}")
+
+    import re
+    _TABLE_RE = re.compile(r'^[a-zA-Z0-9_.]+$')
+    for attr in ("REPORT_LOGIN_TABLE", "REPORT_PAY_TABLE", "REPORT_ACCOUNT_LOGIN_TABLE"):
+        val = globals()[attr]
+        if val and not _TABLE_RE.match(val):
+            raise ValueError(f"config.json 报表表名非法（只允许字母数字下划线点）: {attr}={val!r}")
 
 
 # Feishu

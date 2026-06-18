@@ -1,6 +1,10 @@
 import re
 import config
 
+
+class SqlGuardError(ValueError):
+    """Raised when SQL fails the safety guard."""
+
 # Set per-user allowed opgame IDs from mcp_server startup args
 REQUIRED_OPGAMES = []
 
@@ -70,40 +74,40 @@ def sanitize(sql):
 
     # No multiple statements
     if ';' in masked:
-        raise ValueError("不支持多条 SQL 语句")
+        raise SqlGuardError("不支持多条 SQL 语句")
 
     # Banned keywords (checked on masked SQL) — checked before SELECT/WITH so error message is consistent
     m = _BANNED_KEYWORDS.search(masked)
     if m:
-        raise ValueError(f"包含禁止操作: {m.group()}")
+        raise SqlGuardError(f"包含禁止操作: {m.group()}")
 
     # Must start with SELECT or WITH
     if not re.match(r'^\s*(select|with)\b', masked, re.IGNORECASE):
-        raise ValueError("只支持 SELECT / WITH 查询")
+        raise SqlGuardError("只支持 SELECT / WITH 查询")
 
     # Banned phrases
     m = _BANNED_PHRASES.search(masked)
     if m:
-        raise ValueError(f"包含禁止内容: {m.group()}")
+        raise SqlGuardError(f"包含禁止内容: {m.group()}")
 
     # game_id must be present (check on original SQL)
     game_id = str(config.GAME_ID)
     if not re.search(rf"game_id\s*=\s*'?{re.escape(game_id)}'?", sql, re.IGNORECASE):
-        raise ValueError(f"SQL 必须包含 game_id = {game_id}")
+        raise SqlGuardError(f"SQL 必须包含 game_id = {game_id}")
 
     # Channel lock
     lock_ids = [str(x) for x in config.LOCK_OPGAME_IDS]
     if lock_ids:
         for oid in re.findall(r"opgame_id\s*=\s*'?(\d+)'?", sql, re.IGNORECASE):
             if oid not in lock_ids:
-                raise ValueError(f"无权限查询渠道 {oid}")
+                raise SqlGuardError(f"无权限查询渠道 {oid}")
 
     # Per-user whitelist
     if REQUIRED_OPGAMES:
         allowed = [str(x) for x in REQUIRED_OPGAMES]
         for oid in re.findall(r"opgame_id\s*=\s*'?(\d+)'?", sql, re.IGNORECASE):
             if oid not in allowed:
-                raise ValueError(f"无权限查询渠道 {oid}")
+                raise SqlGuardError(f"无权限查询渠道 {oid}")
 
     # Auto-add LIMIT if not present at top level
     top = _strip_parens(masked)

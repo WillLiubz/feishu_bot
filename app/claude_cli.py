@@ -48,7 +48,7 @@ def _parse(stdout_text):
     return str(data.get("result", "")), str(data.get("session_id", ""))
 
 
-def run(question, ws, session_id=None):
+def run(question, ws, session_id=None, _retry=0):
     """
     Spawn claude subprocess. Feed question via stdin.
     Returns (answer_text, new_session_id).
@@ -99,8 +99,8 @@ def run(question, ws, session_id=None):
 
     if proc.returncode != 0:
         # If session is invalid, retry once without --resume
-        if session_id and _is_session_invalid(stderr_text):
-            return run(question, ws, session_id=None)
+        if session_id and _is_session_invalid(stderr_text) and _retry == 0:
+            return run(question, ws, session_id=None, _retry=1)
         raise RuntimeError(f"Claude 异常退出 (rc={proc.returncode}): {stderr_text[:400]}")
 
     stdout_text = stdout.decode("utf-8", errors="replace")
