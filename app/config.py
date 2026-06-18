@@ -26,6 +26,7 @@ def _get(path, default=None):
 
 
 def check():
+    """Validate required fields at startup. Checks: feishu credentials, game_id, data_api credentials."""
     missing = []
     for field in ["feishu.app_id", "feishu.app_secret", "game.game_id",
                   "data_api.client_id", "data_api.key"]:
@@ -78,7 +79,7 @@ LOGVIEW_KEY = _get("logview.key", "")
 # Help and reports
 HELP_TEXT = _get("help_text", "直接用中文提问即可。")
 REPORT_TRIGGERS = _get("report_triggers", {})
-HELP_TRIGGERS = ["help", "帮助", "?", "？", "help"]
+HELP_TRIGGERS = ["help", "帮助", "?", "？"]
 
 # Report table names (configurable per project)
 REPORT_LOGIN_TABLE = _get("reports.login_table", "gamelog_raw.log_rolelogin")
