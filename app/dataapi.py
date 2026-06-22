@@ -51,38 +51,52 @@ def _submit(sql):
 
 
 def _download_rows(task_id, max_rows):
-    """Download TSV result, parse into list[dict], truncate at max_rows."""
-    # Download API expects api_params=url-quoted json with task_id (same pattern as PrestoUtils.py)
+    """Download TSV result, poll until ready, parse into list[dict]."""
     api_params = urllib.parse.quote(json.dumps({"task_id": task_id}))
-    ts = str(int(time.time()))
-    sign = generate_sign({
-        "_key": config.DATA_API_KEY,
-        "api_params": api_params,
-        "client_id": config.DATA_API_CLIENT_ID,
-        "timestamp": ts,
-    })
-    payload = {
-        "client_id": config.DATA_API_CLIENT_ID,
-        "api_params": api_params,
-        "timestamp": ts,
-        "sign": sign,
-    }
-    resp = requests.post(config.DATA_API_DOWNLOAD_URL, json=payload, timeout=120)
-    content_type = resp.headers.get("content-type", "")
-    if "text/html" in content_type:
-        raise RuntimeError(f"数仓返回错误页: {resp.text[:200]}")
 
-    rows = []
-    headers = None
-    reader = csv.reader(io.StringIO(resp.text), delimiter="\t")
-    for line in reader:
-        if headers is None:
-            headers = line
-            continue
-        if len(rows) >= max_rows:
-            break
-        rows.append(dict(zip(headers, line)))
-    return rows
+    for attempt in range(60):  # poll up to 60 times (~5min)
+        ts = str(int(time.time()))
+        sign = generate_sign({
+            "_key": config.DATA_API_KEY,
+            "api_params": api_params,
+            "client_id": config.DATA_API_CLIENT_ID,
+            "timestamp": ts,
+        })
+        payload = {
+            "client_id": config.DATA_API_CLIENT_ID,
+            "api_params": api_params,
+            "timestamp": ts,
+            "sign": sign,
+        }
+        resp = requests.post(config.DATA_API_DOWNLOAD_URL, json=payload, timeout=120)
+        content_type = resp.headers.get("content-type", "")
+
+        if "multipart/form-data" in content_type:
+            # Data is ready — parse TSV
+            rows = []
+            headers = None
+            reader = csv.reader(io.StringIO(resp.text), delimiter="\t")
+            for line in reader:
+                if headers is None:
+                    headers = line
+                    continue
+                if len(rows) >= max_rows:
+                    break
+                rows.append(dict(zip(headers, line)))
+            return rows
+
+        if "text/html" in content_type or resp.text.strip().startswith("<"):
+            # Task not ready yet, wait and retry
+            if attempt < 59:
+                time.sleep(5)
+                continue
+            raise RuntimeError(f"数仓任务超时未完成 (task_id={task_id})")
+
+        # Unknown content type — treat as error
+        raise RuntimeError(f"数仓返回异常 content-type={content_type}: {resp.text[:200]}")
+
+    raise RuntimeError(f"数仓下载重试耗尽 (task_id={task_id})")
+
 
 
 def run_sql_rows(sql, max_rows=None):
