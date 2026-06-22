@@ -234,7 +234,7 @@ def _on_message(data):
 def build_ws_client():
     """Build and return the Feishu WebSocket client."""
     handler = lark.EventDispatcherHandler.builder("", "") \
-        .register(lark.im.v1.P2ImMessageReceiveV1, _on_message) \
+        .register_p2_im_message_receive_v1(_on_message) \
         .build()
 
     ws = lark.ws.Client(
