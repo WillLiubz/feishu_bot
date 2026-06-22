@@ -162,6 +162,9 @@ def _handle_report(client, chat_id, message_id, report_type, text):
 
 def _on_message(data):
     """Main event handler for im.message.receive_v1."""
+    import sys as _sys
+    _sys.stderr.write(f"[bot] _on_message called type={type(data)}\n")
+    _sys.stderr.flush()
     try:
         client = _lark_client()
         event = data
@@ -248,6 +251,6 @@ def build_ws_client():
         config.FEISHU_APP_ID,
         config.FEISHU_APP_SECRET,
         event_handler=handler,
-        log_level=lark.LogLevel.ERROR,
+        log_level=lark.LogLevel.DEBUG,
     )
     return ws
