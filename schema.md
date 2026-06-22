@@ -21,6 +21,8 @@
 
 **重要**：`game_id` 在 ECO 表里为 **字符串** `'312'`，在 KPI 表里为 **整数** `312`，写 SQL 需注意。
 
+**重要**：ECO 表（gameeco_raw/odl）的 `role_id` 为 **VARCHAR 字符串**，不是数字。按 role_id 过滤时必须写 `CAST(role_id AS VARCHAR) = '123456'`，不能写 `role_id = 123456`（整数比较会全表扫描，极慢）。
+
 ---
 
 ### 通用 KPI 基础字段（所有 gamelog_raw/odl 表均包含）
