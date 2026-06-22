@@ -1,8 +1,9 @@
 @echo off
+chcp 65001 >nul
 cd /d "%~dp0"
 :loop
 python app\run_bot.py
 echo.
-echo [bot] 进程退出，10 秒后自动重启...
+echo [bot] Process exited, restarting in 10s...
 timeout /t 10 /nobreak
 goto loop

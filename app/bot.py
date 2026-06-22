@@ -162,73 +162,80 @@ def _handle_report(client, chat_id, message_id, report_type, text):
 
 def _on_message(data):
     """Main event handler for im.message.receive_v1."""
-    client = _lark_client()
-    event = data
-    msg = event.event.message
-    chat_id = msg.chat_id
-    user_id = event.event.sender.sender_id.open_id
-    message_id = msg.message_id
-
-    text = _extract_text(event)
-    if not text:
-        return
-
-    store.log_in(chat_id, user_id, message_id, text)
-
-    # Instant commands (no whitelist check)
-    if text.strip().lower() == "whoami":
-        uname = names.user_name(user_id)
-        allowed, opgames = _policy(user_id)
-        scope = "全部渠道" if not opgames else str(opgames)
-        _send_text(client, chat_id,
-                   f"你好 {uname}\nopen_id: {user_id}\n可查范围: {scope}")
-        return
-
-    if any(t in text.lower() for t in config.HELP_TRIGGERS):
-        _send_text(client, chat_id, config.HELP_TEXT)
-        return
-
-    # Whitelist check
-    allowed, opgames = _policy(user_id)
-    if not allowed:
-        _send_text(client, chat_id, "抱歉，你没有使用权限。如需开通请联系管理员。")
-        return
-
-    # Concurrency: per-chat serialization
-    with _active_lock:
-        if chat_id in _active_chats:
-            _send_text(client, chat_id, "上一条查询还未完成，请等待结果后再提问。")
-            return
-        _active_chats.add(chat_id)
-
-    # Concurrency: global semaphore
-    if not _query_sem.acquire(blocking=False):
-        with _active_lock:
-            _active_chats.discard(chat_id)
-        _send_text(client, chat_id, "当前查询较多，请稍后再试。")
-        return
-
-    # Route: fixed report or LLM
-    report_type = reports.match(text)
-    if report_type:
-        t = threading.Thread(
-            target=_handle_report,
-            args=(client, chat_id, message_id, report_type, text),
-            daemon=True,
-        )
-    else:
-        t = threading.Thread(
-            target=_handle,
-            args=(client, chat_id, user_id, message_id, text, opgames),
-            daemon=True,
-        )
-
     try:
-        t.start()
-    except Exception:
-        _query_sem.release()
+        client = _lark_client()
+        event = data
+        msg = event.event.message
+        chat_id = msg.chat_id
+        user_id = event.event.sender.sender_id.open_id
+        message_id = msg.message_id
+
+        text = _extract_text(event)
+        print(f"[bot] recv chat={chat_id[-8:]} user={user_id[-8:]} text={repr(text)}", flush=True)
+        if not text:
+            return
+
+        store.log_in(chat_id, user_id, message_id, text)
+
+        # Instant commands (no whitelist check)
+        if text.strip().lower() == "whoami":
+            uname = names.user_name(user_id)
+            allowed, opgames = _policy(user_id)
+            scope = "全部渠道" if not opgames else str(opgames)
+            _send_text(client, chat_id,
+                       f"你好 {uname}\nopen_id: {user_id}\n可查范围: {scope}")
+            return
+
+        if any(t in text.lower() for t in config.HELP_TRIGGERS):
+            _send_text(client, chat_id, config.HELP_TEXT)
+            return
+
+        # Whitelist check
+        allowed, opgames = _policy(user_id)
+        if not allowed:
+            _send_text(client, chat_id, "抱歉，你没有使用权限。如需开通请联系管理员。")
+            return
+
+        # Concurrency: per-chat serialization
         with _active_lock:
-            _active_chats.discard(chat_id)
+            if chat_id in _active_chats:
+                _send_text(client, chat_id, "上一条查询还未完成，请等待结果后再提问。")
+                return
+            _active_chats.add(chat_id)
+
+        # Concurrency: global semaphore
+        if not _query_sem.acquire(blocking=False):
+            with _active_lock:
+                _active_chats.discard(chat_id)
+            _send_text(client, chat_id, "当前查询较多，请稍后再试。")
+            return
+
+        # Route: fixed report or LLM
+        report_type = reports.match(text)
+        if report_type:
+            t = threading.Thread(
+                target=_handle_report,
+                args=(client, chat_id, message_id, report_type, text),
+                daemon=True,
+            )
+        else:
+            t = threading.Thread(
+                target=_handle,
+                args=(client, chat_id, user_id, message_id, text, opgames),
+                daemon=True,
+            )
+
+        try:
+            t.start()
+        except Exception:
+            _query_sem.release()
+            with _active_lock:
+                _active_chats.discard(chat_id)
+
+    except Exception as e:
+        print(f"[bot] _on_message error: {e}", flush=True)
+        import traceback
+        traceback.print_exc()
 
 
 def build_ws_client():
