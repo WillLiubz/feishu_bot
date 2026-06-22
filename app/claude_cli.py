@@ -43,7 +43,9 @@ def _parse(stdout_text):
     if data.get("is_error"):
         raise RuntimeError(f"Claude 返回错误: {str(data.get('result', ''))[:300]}")
     subtype = data.get("subtype", "")
-    if subtype not in ("", "final_answer", None):
+    # Valid subtypes: "success", "final_answer", "", None
+    # Error subtypes: "error_during_execution", "max_turns_reached", etc.
+    if subtype not in ("", "success", "final_answer", None):
         raise RuntimeError(f"Claude 非正常退出 subtype={subtype}: {str(data.get('result', ''))[:200]}")
     return str(data.get("result", "")), str(data.get("session_id", ""))
 
