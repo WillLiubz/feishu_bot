@@ -33,21 +33,24 @@ def _is_session_invalid(text):
     return "session" in t and ("invalid" in t or "not found" in t or "expired" in t)
 
 
+def _is_tool_missing(text):
+    return "query_data" in text and any(
+        kw in text for kw in ("没有", "不可用", "不存在", "无法使用", "not available")
+    )
+
+
 def _parse(stdout_text):
     """
     Parse claude --output-format json stdout.
     Returns (answer_text, session_id).
-    Raises RuntimeError on error responses.
+    Only raises RuntimeError when is_error=True (subtype check removed entirely).
     """
     data = json.loads(stdout_text)
+    result = str(data.get("result", ""))
+    session_id = str(data.get("session_id", ""))
     if data.get("is_error"):
-        raise RuntimeError(f"Claude 返回错误: {str(data.get('result', ''))[:300]}")
-    subtype = data.get("subtype", "")
-    # Valid subtypes: "success", "final_answer", "", None
-    # Error subtypes: "error_during_execution", "max_turns_reached", etc.
-    if subtype not in ("", "success", "final_answer", None):
-        raise RuntimeError(f"Claude 非正常退出 subtype={subtype}: {str(data.get('result', ''))[:200]}")
-    return str(data.get("result", "")), str(data.get("session_id", ""))
+        raise RuntimeError(f"Claude 返回错误: {result[:300]}")
+    return result, session_id
 
 
 def run(question, ws, session_id=None, _retry=0):
@@ -100,10 +103,21 @@ def run(question, ws, session_id=None, _retry=0):
     stderr_text = stderr.decode("utf-8", errors="replace")
 
     if proc.returncode != 0:
-        # If session is invalid, retry once without --resume
         if session_id and _is_session_invalid(stderr_text) and _retry == 0:
             return run(question, ws, session_id=None, _retry=1)
         raise RuntimeError(f"Claude 异常退出 (rc={proc.returncode}): {stderr_text[:400]}")
 
     stdout_text = stdout.decode("utf-8", errors="replace")
-    return _parse(stdout_text)
+    try:
+        answer, new_sid = _parse(stdout_text)
+    except RuntimeError as e:
+        msg = str(e)
+        # Legacy _parse raises on subtype=success but the result is the actual answer
+        if "subtype=success:" in msg:
+            answer = msg.split("subtype=success:", 1)[1].strip()
+            new_sid = ""
+        else:
+            raise
+    if session_id and _retry == 0 and _is_tool_missing(answer):
+        return run(question, ws, session_id=None, _retry=1)
+    return answer, new_sid

@@ -17,6 +17,7 @@ _RULES_TEMPLATE = """\
 
 今天日期（实时表 ds 分区）：{today}
 昨天日期（T+1 延时表 ds 分区）：{yesterday}
+本月起始日期：{month_start}
 
 规则：
 1. 只能使用 query_data 工具查询数据，不允许使用任何其他工具
@@ -27,6 +28,19 @@ _RULES_TEMPLATE = """\
 6. ds 分区日期格式：yyyyMMdd（如 {today}）
 7. 查累计类数据时加 ds >= {ds_start} 条件
 8. 如果 SQL 报错，仔细检查原因后重写，最多重试 3 次
+
+复杂查询拆分策略（必须遵守）：
+9. 凡是需要跨多张大表 JOIN、或时间跨度超过 7 天的关联查询，必须拆分为多步执行：
+   - 第1步：先从主表查出目标 role_id 列表（用 IN 或 LIMIT 控制规模）
+   - 第2步：用第1步得到的 role_id 列表（IN ('id1','id2',...)）过滤第二张表
+   - 第3步：如需继续关联，依此类推
+10. 每一步 SQL 独立执行，结果中间可见，不要把所有逻辑压缩进一条 SQL
+11. 跨月大表（roleitem / roleres / rolebehavior）查询策略：
+    - 优先拆成按周查询：第1周 ds BETWEEN {month_start} AND 第7天，第2周以此类推，最后合并
+    - 或先查 snap_itemcache 获取当前持有量，再用 roleitem 查最近几天的变化
+    - 单次 SQL 日期跨度不超过 10 天，避免全月扫描超时
+12. 最终必须给出汇总结果，哪怕中间某步数据量有限也要基于实际数据得出结论
+13. 本月查询使用本月起始日期 {month_start}，不要自行推算
 """
 
 _DENY_TOOLS = [
@@ -54,6 +68,7 @@ def prepare(chat_id, message_id, opgames=None):
 
     today = date.today().strftime("%Y%m%d")
     yesterday = (date.today() - timedelta(days=1)).strftime("%Y%m%d")
+    month_start = date.today().replace(day=1).strftime("%Y%m%d")
 
     # CLAUDE.md: rules + channel aliases + schema content
     schema_text = ""
@@ -71,7 +86,7 @@ def prepare(chat_id, message_id, opgames=None):
         user_scope = f"\n当前用户仅可查询以下渠道：{', '.join(str(o) for o in opgames)}\n"
 
     rules = _RULES_TEMPLATE.format(
-        today=today, yesterday=yesterday,
+        today=today, yesterday=yesterday, month_start=month_start,
         game_id=config.GAME_ID, ds_start=config.DS_START,
     )
     claude_md = rules + channel_block + user_scope + "\n" + schema_text

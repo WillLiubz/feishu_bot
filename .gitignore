@@ -1,0 +1,26 @@
+# 运行时数据（保留空目录占位）
+data/*
+!data/.gitkeep
+
+# Python 缓存
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# 测试缓存
+.pytest_cache/
+
+# 临时文件
+*.csv
+*.xlsx
+*.tmp
+*.log
+
+# Office 文档
+*.docx
+*.doc
+
+# OS 文件
+.DS_Store
+Thumbs.db

@@ -54,7 +54,7 @@ def _download_rows(task_id, max_rows):
     """Download TSV result, poll until ready, parse into list[dict]."""
     api_params = urllib.parse.quote(json.dumps({"task_id": task_id}))
 
-    for attempt in range(60):  # poll up to 60 times (~5min)
+    for attempt in range(108):  # poll up to 108 times (~9min)
         ts = str(int(time.time()))
         sign = generate_sign({
             "_key": config.DATA_API_KEY,
@@ -90,7 +90,7 @@ def _download_rows(task_id, max_rows):
             if attempt < 59:
                 time.sleep(5)
                 continue
-            raise RuntimeError(f"数仓任务超时未完成 (task_id={task_id})")
+        raise RuntimeError(f"数仓任务超时未完成 (task_id={task_id}，已等待 9 分钟)")
 
         # Unknown content type — treat as error
         raise RuntimeError(f"数仓返回异常 content-type={content_type}: {resp.text[:200]}")

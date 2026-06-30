@@ -219,7 +219,7 @@
 
 ### gameeco_raw.v_presto_snap_packcache — 背包道具快照
 
-每日每个角色的背包道具快照，背包按 pack1~pack5 字符串打包存储。
+每日每个角色的背包道具快照，背包按 pack1~pack5 JSON 字符串存储。适合分析全量背包、特定道具持有情况。
 
 | 字段 | 类型 | 说明 |
 |---|---|---|
@@ -233,26 +233,312 @@
 | role_level | int | 等级 |
 | role_vip | int | VIP |
 | last_login | int | 最后登录时间 |
-| pack1~pack5 | string | 各背包格子内容（格式由游戏定义） |
+| pack1 | string | 主背包（限量道具），JSON：`{"实例ID":"数量,模板ID", ...}` |
+| pack2 | string | 非限量背包，JSON：`{"实例ID":{"num":数量,"templateId":模板ID}, ...}` |
+| pack3 | string | 符文背包，格式同 pack2 |
+| pack4 | string | 扩展背包4，格式同 pack2 |
+| pack5 | string | 扩展背包5，格式同 pack2 |
+
+> **pack 字段 JSON 格式说明**  
+> key = 道具**实例 ID**（每个道具唯一，堆叠道具共享一个实例ID）  
+> pack1 value = `"数量,模板ID"`（逗号分隔字符串）  
+> pack2~5 value = `{"num": 数量, "templateId": 模板ID}`  
+> 模板 ID（templateId）= 道具配置表 ID，同类道具相同，可用于统计持有率。
+
+**查道具持有率推荐用 `snap_itemcache`（更简洁），packcache 适合需要完整背包列表的场景。**
 
 ---
 
-### gameeco_raw.v_presto_snap_dimcache — 维度快照（神将/坐骑/宝物等）
+### gameeco_raw.v_presto_snap_itemcache — 道具快照 ★（推荐用于持有率分析）
 
-每日每个角色的养成维度快照，通过 `dim_type` 区分类型（不同 `dim_type` 对应不同的 `sub_dim_1~10` 含义）。
+每日每个角色持有的每种道具一条，是**查道具拥有率的最直接表**。
+
+| 字段 | 类型 | 说明 |
+|---|---|---|
+| game_id | int | 312 |
+| server_id / opgame_id / op_id | int | 服务器/渠道/运营商 |
+| cache_day | string | 快照日期 yyyyMMdd |
+| account | string | 账号 |
+| role_id | bigint | 角色 ID |
+| item_id | int | 道具模板 ID（同类道具相同） |
+| item_name | string | 道具名称 |
+| item_num | bigint | 持有数量 |
+
+> **注意**：`snap_itemcache` 的 `game_id` 为**整数** 312，不是字符串。
+
+#### 道具拥有率示例 SQL
+
+**查昨日指定道具的拥有率（按活跃玩家为分母）**
+```sql
+WITH dau AS (
+  SELECT COUNT(DISTINCT role_id) AS total
+  FROM gamelog_odl.v_presto_log_rolelogin
+  WHERE game_id = 312 AND ds = '<昨天ds>'
+  AND SUBSTR(CAST(server_id AS VARCHAR), 5, 1) != '4'
+),
+holders AS (
+  SELECT COUNT(DISTINCT role_id) AS cnt
+  FROM gameeco_raw.v_presto_snap_itemcache
+  WHERE game_id = 312 AND cache_day = '<昨天ds>'
+  AND item_name = '<道具名称>'
+  AND item_num > 0
+  AND SUBSTR(CAST(server_id AS VARCHAR), 5, 1) != '4'
+)
+SELECT
+  holders.cnt AS 持有人数,
+  dau.total AS 活跃人数,
+  ROUND(CAST(holders.cnt AS DOUBLE) / dau.total * 100, 2) AS 拥有率
+FROM holders, dau
+```
+
+**查昨日多个道具的拥有率排行**
+```sql
+WITH dau AS (
+  SELECT COUNT(DISTINCT role_id) AS total
+  FROM gamelog_odl.v_presto_log_rolelogin
+  WHERE game_id = 312 AND ds = '<昨天ds>'
+  AND SUBSTR(CAST(server_id AS VARCHAR), 5, 1) != '4'
+),
+items AS (
+  SELECT item_name, item_id,
+    COUNT(DISTINCT role_id) AS holders,
+    SUM(item_num) AS total_num
+  FROM gameeco_raw.v_presto_snap_itemcache
+  WHERE game_id = 312 AND cache_day = '<昨天ds>'
+  AND item_num > 0
+  AND SUBSTR(CAST(server_id AS VARCHAR), 5, 1) != '4'
+  GROUP BY item_name, item_id
+)
+SELECT
+  item_name, item_id, holders, total_num,
+  ROUND(CAST(holders AS DOUBLE) / dau.total * 100, 2) AS 拥有率
+FROM items, dau
+ORDER BY 拥有率 DESC
+LIMIT 50
+```
+
+---
+
+### gameeco_raw.v_presto_snap_dimcache — 养成维度快照 ★（推荐用于饱和度分析）
+
+每日每个角色的每个养成维度一条，通过 `dim_type` 区分系统，`sub_dim_1~10` 记录各系统的养成等级。**是分析养成饱和度的核心表。**
 
 | 字段 | 类型 | 说明 |
 |---|---|---|
 | ds / cache_day | string | 日期 |
 | game_id | string | '312' |
 | role_id | bigint | 角色 ID |
-| op_id | int | 运营商 ID |
-| dim_type | int | 维度类型（区分神将/坐骑/宝物等） |
-| dim_id | bigint | 维度对象 ID |
+| server_id / op_id | int | 服务器/运营商 |
+| dim_type | int | 养成系统类型（见下方枚举） |
+| dim_id | bigint | 维度对象 ID（含义随 dim_type 变化） |
 | dim_name | string | 维度对象名称 |
-| dim_item_id | bigint | 关联道具 ID |
-| sub_dim_1~sub_dim_10 | string | 维度子属性参数（含义随 dim_type 变化） |
+| dim_item_id | bigint | 关联道具/模板 ID |
+| sub_dim_1~sub_dim_10 | string | 养成子属性（含义随 dim_type 变化，见下表） |
 | extra_1~extra_9 | string | 额外扩展参数 |
+
+#### dim_type 枚举值
+
+| dim_type | 系统名称 |
+|---|---|
+| 1 | 英雄（Hero） |
+| 2 | 装备（Equip） |
+| 3 | 宝物（Baowu） |
+| 4 | 坐骑（Horse） |
+| 5 | 翅膀（Wing） |
+| 6 | 神将（Goddess） |
+| 7 | 符文（Runes） |
+| 8 | 符文孔位（Runes Position） |
+| 9 | 神武（Shenwu） |
+| 10 | 时装（Fashion） |
+| 11 | 宝物部件（Baowu Part） |
+| 12 | 宠物（Pet） |
+| 13 | 英雄皮肤（Hero Skin） |
+| 15 | 护符（Talisman） |
+| 16 | 护符图鉴（Talisman Illustration） |
+| 17 | 翅膀酒馆（Wing Tavern） |
+| 18 | 坐骑酒馆（Horse Tavern） |
+| 19 | 翅膀/坐骑羽化（Yuhua） |
+| 20 | 宝石（Baoshi） |
+| 21 | 宠物炼金（Pet LJ） |
+| 22 | 灵装（Spirit Equipment） |
+| 23 | 灵装图鉴（Spirit Equipment Illustration） |
+| 24 | 星阁（Star Pavilion） |
+| 25 | 星纹（Star Emblem） |
+| 26 | 混沌维度（Chaos Dim） |
+| 27 | 称号（Title） |
+| 28 | 变装（Disguise） |
+| 29 | 龙珠（Dragonball） |
+| 30 | 超神（Supergod） |
+| 32 | 灵核（Spirit Core） |
+| 33 | 灵核图鉴（Spirit Core Book） |
+| 34 | 超神装备（Supergod Equip） |
+| 35 | 兽魂（Beast Soul） |
+
+#### 各 dim_type 的 sub_dim 字段含义
+
+**dim_type = 1（英雄）**
+- dim_id：编队位置
+- dim_item_id：英雄模板 ID
+- sub_dim_1：战力
+- sub_dim_2：等级
+- sub_dim_3：突破等级
+- sub_dim_4：进阶等级
+- sub_dim_5：进阶经验
+- sub_dim_6：觉醒等级
+- sub_dim_7：主动技能 ID
+- sub_dim_8：被动技能1 ID
+- sub_dim_9：被动技能2 ID
+- sub_dim_10：`星级:星点`（冒号分隔）
+- extra_1：起始星级
+- extra_2：已装备皮肤 ID
+- extra_3：助战位置
+- extra_4：晋升等级
+- extra_5：涅槃等级（主角专用）
+- extra_6：灵魂/灵神 ID
+- extra_7：灵魂/灵神等级
+
+**dim_type = 2（装备）**
+- dim_id：装备所属英雄 ID
+- dim_item_id：装备模板 ID
+- sub_dim_1：战力
+- sub_dim_2：强化等级
+- sub_dim_3：淬炼等级
+- sub_dim_4：升星等级
+- sub_dim_6：宝石镶嵌 `孔位:道具ID;孔位:道具ID`
+- sub_dim_9：破碎等级
+- sub_dim_10：吞噬等级
+- extra_1：破碎点
+- extra_2：锻造等级
+- extra_3：是否彩金装备（1=是）
+- extra_7：是否灭世装备（1=是）
+- extra_8：混沌等级
+- extra_9：混沌点
+
+**dim_type = 3（宝物）**
+- dim_id：是否当前装备（1=装备中，0=未装备）
+- dim_item_id：宝物模板 ID
+- sub_dim_2：进阶等级
+- sub_dim_6：星级
+- sub_dim_7：星级酒馆等级
+
+**dim_type = 4（坐骑）**
+- dim_id：是否当前装备（1=装备中）
+- dim_item_id：坐骑模板 ID
+- sub_dim_2：进阶等级
+- sub_dim_3：进阶经验
+- sub_dim_4：是否永久（1=永久，0=临时）
+
+**dim_type = 5（翅膀）**
+- dim_id：是否当前装备（1=装备中）
+- dim_item_id：翅膀模板 ID
+- sub_dim_2：进阶等级
+- sub_dim_3：进阶经验
+- sub_dim_4：是否永久（1=永久，0=临时）
+
+**dim_type = 7（符文）**
+- dim_id：装备此符文的英雄 ID
+- dim_item_id：符文模板 ID
+- sub_dim_1：符文类型（1=普通，2=光耀）
+
+**dim_type = 8（符文孔位强化）**
+- dim_id：英雄实例 ID
+- sub_dim_1~5：5个孔位各自的强化等级
+
+**dim_type = 9（神武）**
+- dim_id：是否当前使用（1=使用中）
+- dim_item_id：神武模板 ID
+- sub_dim_1：战力
+- sub_dim_2：等级
+- sub_dim_3：突破等级
+- sub_dim_4~6：技能1~3
+- sub_dim_7：是否宿命神武（1=是）
+- sub_dim_8：超越等级
+- sub_dim_9：神武位置编号
+- sub_dim_10：超越点
+
+**dim_type = 32（灵核）**
+- dim_id / dim_item_id：灵核 ID
+- sub_dim_1：状态（1=已获得，2=已装备）
+- sub_dim_2：状态标记
+- sub_dim_3：装备位置
+- sub_dim_4：等级/强度
+- sub_dim_5：灵核类型
+
+**dim_type = 35（兽魂）**
+- dim_id / dim_name：兽魂品质
+- dim_item_id：核心等级
+- sub_dim_1：祭坛等级
+- sub_dim_2：激活总等级
+
+#### 养成饱和度示例 SQL
+
+**查昨日英雄养成分布（等级、突破、觉醒）**
+```sql
+SELECT
+  CAST(sub_dim_2 AS INT) AS 英雄等级,
+  CAST(sub_dim_3 AS INT) AS 突破等级,
+  CAST(sub_dim_6 AS INT) AS 觉醒等级,
+  COUNT(DISTINCT role_id) AS 人数
+FROM gameeco_raw.v_presto_snap_dimcache
+WHERE game_id = '312' AND cache_day = '<昨天ds>'
+AND dim_type = 1
+AND SUBSTR(CAST(server_id AS VARCHAR), 5, 1) != '4'
+GROUP BY sub_dim_2, sub_dim_3, sub_dim_6
+ORDER BY 英雄等级 DESC, 突破等级 DESC
+LIMIT 50
+```
+
+**查昨日装备强化等级分布（饱和度分析）**
+```sql
+SELECT
+  CAST(sub_dim_2 AS INT) AS 强化等级,
+  COUNT(*) AS 装备数,
+  COUNT(DISTINCT role_id) AS 持有人数
+FROM gameeco_raw.v_presto_snap_dimcache
+WHERE game_id = '312' AND cache_day = '<昨天ds>'
+AND dim_type = 2
+AND SUBSTR(CAST(server_id AS VARCHAR), 5, 1) != '4'
+GROUP BY sub_dim_2
+ORDER BY 强化等级 DESC
+LIMIT 30
+```
+
+**查昨日各养成系统参与人数（按 dim_type 汇总）**
+```sql
+SELECT
+  dim_type,
+  CASE dim_type
+    WHEN 1 THEN '英雄' WHEN 2 THEN '装备' WHEN 3 THEN '宝物'
+    WHEN 4 THEN '坐骑' WHEN 5 THEN '翅膀' WHEN 6 THEN '神将'
+    WHEN 7 THEN '符文' WHEN 9 THEN '神武' WHEN 32 THEN '灵核'
+    WHEN 35 THEN '兽魂' ELSE CAST(dim_type AS VARCHAR)
+  END AS 养成系统,
+  COUNT(DISTINCT role_id) AS 参与人数,
+  COUNT(*) AS 记录数
+FROM gameeco_raw.v_presto_snap_dimcache
+WHERE game_id = '312' AND cache_day = '<昨天ds>'
+AND SUBSTR(CAST(server_id AS VARCHAR), 5, 1) != '4'
+GROUP BY dim_type
+ORDER BY 参与人数 DESC
+```
+
+**查昨日高等级英雄分布（突破满级玩家数）**
+```sql
+SELECT
+  CAST(sub_dim_3 AS INT) AS 突破等级,
+  COUNT(DISTINCT role_id) AS 玩家数,
+  COUNT(*) AS 英雄数
+FROM gameeco_raw.v_presto_snap_dimcache
+WHERE game_id = '312' AND cache_day = '<昨天ds>'
+AND dim_type = 1
+AND sub_dim_3 IS NOT NULL AND sub_dim_3 != ''
+AND SUBSTR(CAST(server_id AS VARCHAR), 5, 1) != '4'
+GROUP BY sub_dim_3
+ORDER BY 突破等级 DESC
+LIMIT 20
+```
+
+
 
 ---
 
@@ -260,28 +546,325 @@
 
 ### gameeco_odl.v_presto_log_rolebehavior — 玩法行为日志 ★
 
-记录玩家各类玩法参与（战斗/副本/PVP/活动等），是分析留存、活跃度的核心表。
+记录玩家各类玩法参与（战斗/副本/PVP/活动等），是分析留存、活跃度的核心表。每次玩家触发功能模块行为产生一条，`game_id = '312'`（字符串）。
 
 在 EcoBase 基础字段之上，额外有：
 
 | 字段 | 类型 | 说明 |
 |---|---|---|
-| b_type | string | 玩法大类（如 "pve"/"pvp"/"活动" 等字符串） |
-| zone | string | 玩法子类 |
-| b_id | int | 玩法 ID（副本/关卡/活动具体 ID） |
-| zone_id | int | 副本/地图 ID |
-| b_value | string | 参与状态（竖线分隔多个参数） |
-| session_length | int | 玩法停留时长（秒） |
-| enemy_id | bigint | 对手角色 ID |
-| rank_before | int | 战前排名 |
-| rank_after | int | 战后排名 |
-| b_param | string | 附加参数 |
+| b_type | string | 功能模块名称（见下方取值表） |
+| zone | string | 场景子标识（多数为空） |
+| b_id | int | 模块 ID（模块类型枚举整数） |
+| zone_id | int | 场景/副本/关卡 ID |
+| b_value | string | 行为具体动作（见下方取值表） |
+| session_length | int | 停留时长（秒，多数为 0） |
+| enemy_id | bigint | 对手角色 ID（PVP 时有效） |
+| rank_before | int | 行为前排名（排行榜类行为有效） |
+| rank_after | int | 行为后排名（排行榜类行为有效） |
+| b_param | string | 附加参数（分号分隔，首段为日志来源 ID） |
 | union_name | string | 公会名称 |
-| battle_attr | string | 战斗属性（竖线分隔） |
+| battle_attr | string | 战斗属性（分号分隔） |
 | buff_item_consume | string | 消耗的 BUFF 道具 |
-| team_power | bigint | 队伍总战力 |
-| other_object | string | 其他相关对象 |
-| customized | string | 游戏自定义扩展 |
+| team_power | bigint | 玩家当前战力 |
+| other_object | string | 其他关联对象（如强化类型） |
+| customized | string | 游戏自定义扩展字段 |
+
+---
+
+#### b_type 取值表（功能模块，来自服务端 module.getName()）
+
+**战斗 / 副本**
+
+| b_type | 模块含义 |
+|---|---|
+| pve | 关卡/主线副本 |
+| PveTeam | 组队副本（深渊等） |
+| scene | 场景/地图进出 |
+| battle | 战斗通用 |
+| Yuanzheng | 远征 |
+| MagicExplore | 魔法探索 |
+| SpiritCoreGame | 灵核小游戏 |
+| pvestrategy | 副本策略 |
+| LingEquipmentPve | 灵装副本 |
+
+**PVP / 竞技**
+
+| b_type | 模块含义 |
+|---|---|
+| Arena | 竞技场 |
+| GuildWar | 公会战 |
+| GuildMobilize | 公会总动员 |
+| Ladder | 阶梯赛（单服） |
+| CrossLadder | 跨服阶梯赛 |
+| PvpChess | 夺宝奇兵 |
+| WorldPk | 世界PK |
+| NewGvG | 新公会对战 |
+| HolyWar | 圣战 |
+| HolyGrailWar | 圣杯战 |
+| MineFight | 矿战 |
+| PinnaclePvp | 巅峰PVP |
+| PvpSimulator | PVP模拟器 |
+| Battlefield | 战场 |
+| Match | 匹配对战 |
+
+**Boss 战**
+
+| b_type | 模块含义 |
+|---|---|
+| world_boss | 世界Boss（单服） |
+| SupergodBoss | 超神Boss |
+| WorldCrossBoss | 跨服世界Boss |
+
+**公会 / 社团**
+
+| b_type | 模块含义 |
+|---|---|
+| guild | 公会操作（加入/退出/捐献等） |
+| club | 社团操作（创建/农场/祭坛等） |
+
+**英雄 / 女神养成**
+
+| b_type | 模块含义 |
+|---|---|
+| hero | 英雄系统（升级/突破/觉醒/皮肤等） |
+| HeroSp | 英雄特殊操作 |
+| HeroStory | 英雄传记 |
+| Assistant | 英雄小助手 |
+| AssistHeros | 助战英雄 |
+| GoddessCollectionCard | 女神收集卡 |
+| GoddessMarket | 女神市场（旧） |
+| GoddessNewmarket | 女神市场（新） |
+| GoddessPrivilege | 女神特权 |
+| GoddessSanta | 女神圣诞活动 |
+| GoddessTreasure | 女神宝库 |
+| GoddessMercenary | 女神雇佣兵 |
+| GoddnessArk | 女神方舟 |
+| GoddnessRose | 女神玫瑰 |
+| GoddnessEgg | 女神砸蛋 |
+
+**装备 / 宝物养成**
+
+| b_type | 模块含义 |
+|---|---|
+| shenwu | 神武装备 |
+| Fuwen | 符文 |
+| Supergod_Fuwen | 超神符文 |
+| SupergodYinwen | 超神印纹 |
+| SpiritEquipment | 灵装 |
+| StarEmblem | 星纹 |
+| StarPavilion | 星阁 |
+| star | 星级系统 |
+| supergodEquip | 超神装备 |
+| Supergod | 超神系统 |
+| baowu | 宝物系统 |
+| halidom | 法宝 |
+| Talisman | 护符 |
+| DragonBall | 龙珠 |
+| Ce | 策（策略道具） |
+| wing | 翅膀 |
+| horse | 坐骑 |
+| SpiritCore | 灵核 |
+| beast_soul | 兽魂 |
+| Bright_Fuwen | 光明符文 |
+
+**任务 / 活动**
+
+| b_type | 模块含义 |
+|---|---|
+| task | 主线任务 |
+| daily_task | 日常任务 |
+| act_task | 活动任务 |
+| WeekTask | 周任务 |
+| NewTaskCycle | 新任务循环 |
+| activity | 活动通用 |
+| achieve | 成就 |
+| Seven | 七日活动 |
+| sign_data | 签到 |
+| online_reward | 在线奖励 |
+| OnlineExp | 在线经验 |
+| levelaward | 等级奖励 |
+| AngelPass | 天使通行证 |
+| MiniappPass | 小游戏通行证 |
+| SuperLogin | 超级登录 |
+| Guide | 引导任务 |
+| guide_log | 引导日志 |
+
+**商城 / 抽卡 / 购买**
+
+| b_type | 模块含义 |
+|---|---|
+| shop | 商城 |
+| items | 道具操作 |
+| Exchange | 兑换 |
+| CreditShop | 积分商城 |
+| ArenaShop | 竞技场商城 |
+| MonthCard | 月卡 |
+| NewMonthCard | 新月卡 |
+| Fund | 基金 |
+| SummonModule | 召唤 |
+| FlashSummon | 限时召唤 |
+| LimitedSummon | 限定召唤 |
+| Gamble | 抽卡/博彩 |
+| Turntable | 转盘 |
+| ScratchTicket | 刮刮卡 |
+| Scratcher | 刮奖机 |
+| RollDice | 掷骰子 |
+| Ticket | 票券 |
+| TreasureHunt | 寻宝 |
+| Kingtreasure | 王者宝藏 |
+| CardsOfDestiny | 命运卡 |
+
+**运营活动**
+
+| b_type | 模块含义 |
+|---|---|
+| Tycoon | 大亨活动 |
+| MonthRank | 月度排行 |
+| MonthRebate | 月返利 |
+| MonthWeal | 月福利 |
+| Monthgift | 月礼包 |
+| RechargeGift | 充值礼包 |
+| UnionPromotion | 公会促销 |
+| BuyMoreSaveMore | 买多省多 |
+| BuyOneGetOneFree | 买一送一 |
+| DirectPurchaseStore | 直购商城 |
+| DirectVoucher | 直购凭证 |
+| Countdown | 倒计时活动 |
+| FestivalActivity | 节日活动 |
+| FestivalBlessing | 节日祝福 |
+| PlayPreheat | 预热活动 |
+| Anniversary | 周年庆 |
+| Celebration | 庆典 |
+| Christmas | 圣诞活动 |
+| Turkey | 火鸡节 |
+| Pumpkin | 南瓜节 |
+| Zodiac | 十二生肖 |
+| NeedUp | 提升活动 |
+
+**社交 / 其他**
+
+| b_type | 模块含义 |
+|---|---|
+| friend | 好友系统 |
+| title | 称号 |
+| Fashion | 时装 |
+| RoleHead | 头像框 |
+| Theme | 主题 |
+| Vip | VIP系统 |
+| ranking / new_ranking | 排行榜 |
+| resource_recovery | 资源回收 |
+| stone_to_gold | 魔石换金 |
+| bag | 背包 |
+| Wenjuan | 问卷 |
+| NameChange | 改名 |
+| PhoneBind | 手机绑定 |
+| Explore | 探索 |
+| Fantasy | 幻境 |
+
+---
+
+#### b_value 取值表（按 b_type 分类）
+
+**b_type = "guild"（公会操作）**
+
+| b_value | 含义 |
+|---|---|
+| 创建公会 | 创建公会 |
+| 加入公会 | 加入公会 |
+| 退出公会 | 主动退出 |
+| 解散公会 | 解散公会 |
+| 踢出公会 | 踢出成员 |
+| 申请加入公会 | 发送入会申请 |
+| 批准加入公会 | 审批通过申请 |
+| 拒绝申请加入公会 | 拒绝申请 |
+| 公会捐献 | 捐献资源 |
+| 公会升级 | 公会整体升级 |
+| 公会建筑升级 | 建筑升级 |
+| 打开公会宝箱 | 领取宝箱奖励 |
+| 设置官职 | 任命/变更职位 |
+
+**b_type = "club"（社团操作）**
+
+| b_value | 含义 |
+|---|---|
+| club_create | 创建社团（b_param：社团ID;社团名;地区;信条;宠物ID;消耗） |
+| club_dissolve | 解散社团 |
+| club_join | 加入社团（b_param：社团ID;社团名;加入原因 1=申请 2=邀请） |
+| club_leave | 离开社团（b_param：社团ID;社团名;离开原因 1=主动 2=被踢） |
+| club_apply_send | 发送申请 |
+| club_invite_send | 发送邀请 |
+| club_appoint | 任命职位 |
+| club_donate | 社团捐献 |
+| club_red_packet_send | 发红包 |
+| club_red_packet_claim | 领红包 |
+| club_prosperity_reward | 繁荣度奖励 |
+| club_pet_change | 更换社团宠物 |
+| club_pet_feed | 喂养社团宠物（b_param：社团ID;社团名;宠物ID;消耗;获得;前繁荣;新繁荣;宠物经验;前等级信息;新等级信息） |
+| club_notice_edit | 修改公告 |
+| club_belief_edit | 修改信条 |
+| club_altar_upgrade | 祭坛升级 |
+| club_altar_refresh | 祭坛刷新 |
+| club_personal_tech_upgrade_start | 个人科技开始升级 |
+| club_personal_tech_upgrade_done | 个人科技升级完成 |
+| club_personal_tech_accelerate | 个人科技加速 |
+| club_club_tech_upgrade_start | 社团科技开始升级 |
+| club_club_tech_upgrade_done | 社团科技升级完成 |
+| club_club_tech_accelerate | 社团科技加速 |
+| club_mine_tool_cost | 矿场消耗工具 |
+| club_mine_depth_reward | 矿场深度奖励 |
+| club_farm_plant | 农场种植 |
+| club_farm_fertilize | 农场施肥 |
+| club_farm_harvest | 农场收获 |
+| club_farm_level_up | 农场升级 |
+| club_farm_steal_start | 开始偷菜 |
+| club_farm_steal_settle | 偷菜结算 |
+| club_farm_steal_evict | 驱逐偷菜者 |
+| club_welfare_claim | 领取社团福利 |
+
+**b_type = "Arena"（竞技场）**
+
+| b_value | 含义 |
+|---|---|
+| 竞技场挑战 | 玩家发起挑战 |
+| 竞技场小助手挑战 | 小助手代打 |
+
+> `rank_before`/`rank_after` 记录战前战后排名；`enemy_id` 记录对手角色 ID；`team_power` 记录当前战力。
+
+**b_type = "world_boss" / "SupergodBoss" / "WorldCrossBoss"（Boss战）**
+
+> `enemy_id` 有效（Boss 对象 ID）；`b_param` 含 GLOG_SOURCE + 伤害值 + 排名 + 积分等。
+
+**b_type = "pve" / "PveTeam"（副本）**
+
+> `zone_id` 记录副本/关卡 ID；`b_id` 记录副本模块 ID。
+
+---
+
+#### b_param 字段格式
+
+由服务端 `GenExtraLogParam()` 生成，格式为**分号分隔字符串**：
+
+```
+{glog_source_id};{param1};{param2};...
+```
+
+第一段 `glog_source_id` 为日志来源枚举整数，常见值：
+
+| glog_source_id | 含义 |
+|---|---|
+| 1 | 无（默认） |
+| 100000 | 英雄突破 |
+| 100001 | 英雄培养 |
+| 100002 | 英雄觉醒 |
+| 100007 | 英雄升级 |
+| 101601 | 公会捐献 |
+| 101604 | 公会建筑升级 |
+| 101606 | 创建公会 |
+| 101607 | 离开公会 |
+| 103306 | 世界Boss |
+| 103308 | Boss战结束 |
+| 108036 | 跨服阶梯排名战 |
+| 108037 | 跨服阶梯升级 |
 
 ---
 
@@ -542,6 +1125,67 @@ AND SUBSTR(CAST(server_id AS VARCHAR), 5, 1) != '4'
 GROUP BY b_type, b_id
 ORDER BY events DESC
 LIMIT 30
+```
+
+### 查昨日竞技场参与人数及挑战次数
+```sql
+SELECT
+  COUNT(DISTINCT role_id) AS players,
+  COUNT(*) AS battles
+FROM gameeco_odl.v_presto_log_rolebehavior
+WHERE game_id = '312'
+AND ds = '<昨天ds>'
+AND b_type = 'Arena'
+AND b_value = '竞技场挑战'
+AND SUBSTR(CAST(server_id AS VARCHAR), 5, 1) != '4'
+```
+
+### 查昨日公会行为分布
+```sql
+SELECT b_value, COUNT(DISTINCT role_id) AS players, COUNT(*) AS events
+FROM gameeco_odl.v_presto_log_rolebehavior
+WHERE game_id = '312'
+AND ds = '<昨天ds>'
+AND b_type = 'guild'
+AND SUBSTR(CAST(server_id AS VARCHAR), 5, 1) != '4'
+GROUP BY b_value
+ORDER BY events DESC
+```
+
+### 查昨日社团操作明细
+```sql
+SELECT b_value, COUNT(DISTINCT role_id) AS players, COUNT(*) AS events
+FROM gameeco_odl.v_presto_log_rolebehavior
+WHERE game_id = '312'
+AND ds = '<昨天ds>'
+AND b_type = 'club'
+AND SUBSTR(CAST(server_id AS VARCHAR), 5, 1) != '4'
+GROUP BY b_value
+ORDER BY events DESC
+```
+
+### 查昨日副本（pve/PveTeam）参与情况
+```sql
+SELECT b_type, zone_id, COUNT(DISTINCT role_id) AS players, COUNT(*) AS events
+FROM gameeco_odl.v_presto_log_rolebehavior
+WHERE game_id = '312'
+AND ds = '<昨天ds>'
+AND b_type IN ('pve', 'PveTeam')
+AND SUBSTR(CAST(server_id AS VARCHAR), 5, 1) != '4'
+GROUP BY b_type, zone_id
+ORDER BY events DESC
+LIMIT 30
+```
+
+### 查某玩家近7天行为轨迹
+```sql
+SELECT ds, b_type, b_value, b_id, zone_id, rank_before, rank_after, team_power, createtime_local
+FROM gameeco_odl.v_presto_log_rolebehavior
+WHERE game_id = '312'
+AND ds >= '<7天前ds>'
+AND CAST(role_id AS VARCHAR) = '<角色ID>'
+ORDER BY createtime_local
+LIMIT 200
 ```
 
 ### 查昨日资源消耗来源

@@ -27,6 +27,7 @@ def main():
     result_dir = Path(args.result_dir)
     chat_id = args.chat_id
     message_id = args.message_id
+    query_counter = [0]  # mutable counter shared across tool calls
 
     sqlguard.REQUIRED_OPGAMES = json.loads(args.opgame_ids)
 
@@ -48,8 +49,14 @@ def main():
         try:
             clean_sql = sqlguard.sanitize(sql)
             rows = dataapi.run_sql_rows(clean_sql)
+            # Save last result as result.csv (for backward compat)
             csv_path = result_dir / "result.csv"
             dquery.write_csv_to(rows, csv_path)
+            # Save numbered copy for multi-sheet Excel
+            query_counter[0] += 1
+            n = query_counter[0]
+            dquery.write_csv_to(rows, result_dir / f"query_{n}.csv")
+            (result_dir / f"query_{n}.sql").write_text(clean_sql, encoding="utf-8")
             latency_ms = int((time.time() - t0) * 1000)
             store.log_query(chat_id, message_id, clean_sql, len(rows), "ok", latency_ms)
             columns = list(rows[0].keys()) if rows else []

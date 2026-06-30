@@ -12,6 +12,7 @@ from lark_oapi.api.im.v1 import (
 import account_cache
 import claude_cli
 import config
+import dquery
 import names
 import reports
 import store
@@ -106,6 +107,33 @@ def _policy(user_id):
     return True, list(val)
 
 
+def _send_query_summary(client, chat_id, message_id):
+    """Send SQL execution details to Feishu after a query."""
+    import sqlite3
+    from pathlib import Path
+    db_path = Path(config._ROOT) / "data" / "bot.db"
+    try:
+        conn = sqlite3.connect(str(db_path))
+        rows = conn.execute(
+            "SELECT sql, row_count, status, latency_ms, error FROM query_log"
+            " WHERE message_id=? ORDER BY id",
+            (message_id,)
+        ).fetchall()
+        conn.close()
+    except Exception:
+        return
+    if not rows:
+        return
+    lines = ["📊 执行详情："]
+    for i, (sql, row_count, status, latency_ms, error) in enumerate(rows, 1):
+        short_sql = (sql or "")[:150].replace('\n', ' ')
+        if status == "ok":
+            lines.append(f"第{i}次查询（{latency_ms}ms）：{short_sql}\n→ 返回 {row_count} 行")
+        else:
+            lines.append(f"第{i}次查询（{status}）：{short_sql}\n→ {str(error or '')[:120]}")
+    _send_text(client, chat_id, "\n".join(lines))
+
+
 def _handle(client, chat_id, user_id, message_id, text, opgames):
     """Process a query through the LLM path."""
     t0 = time.time()
@@ -118,15 +146,23 @@ def _handle(client, chat_id, user_id, message_id, text, opgames):
         store.set_session(chat_id, new_sid)
         _send_text(client, chat_id, answer)
         import os
-        csv_path = ws["result_dir"] + "/result.csv"
-        if os.path.exists(csv_path):
-            _send_file(client, chat_id, csv_path)
+        # Build multi-sheet Excel from all query_N.csv files
+        xlsx_path = dquery.combine_to_excel(ws["result_dir"])
+        if xlsx_path and os.path.exists(xlsx_path):
+            _send_file(client, chat_id, xlsx_path, file_name="result.xlsx")
+        elif os.path.exists(ws["result_dir"] + "/result.csv"):
+            _send_file(client, chat_id, ws["result_dir"] + "/result.csv")
+        _send_query_summary(client, chat_id, message_id)
         latency = int((time.time() - t0) * 1000)
         store.log_out(chat_id, message_id, "ok", latency, session_id=new_sid)
     except RuntimeError as e:
         msg = str(e)
         latency = int((time.time() - t0) * 1000)
-        reply = "查询超时，请简化问题后重试" if "超时" in msg else "处理失败，请稍后重试"
+        if "超时" in msg:
+            reply = "查询超时，请简化问题后重试"
+        else:
+            detail = msg[:300].replace('\n', ' ')
+            reply = f"处理失败：{detail}"
         _send_text(client, chat_id, reply)
         store.log_out(chat_id, message_id, "error", latency, error=msg)
     except ValueError as e:
