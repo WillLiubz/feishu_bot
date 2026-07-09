@@ -1,13 +1,17 @@
+import calendar
 import re
 from datetime import date, timedelta, datetime
 import config
 import account_cache
 import dataapi
 import dquery
+import role_ranking_cache
 
 _MAX_RANGE_DAYS = 92
 _LTV_MAX_ROWS = 500000
 _LTV_DAYS = [1, 3, 7, 15, 30]
+_MONTH_RANK_PAY_TOP_N = 200
+_IN_BATCH_SIZE = 1000
 
 
 # ---------------------------------------------------------------------------
@@ -83,24 +87,46 @@ def _parse_dates(text):
     return [today - timedelta(days=1)]
 
 
+def _parse_year_month(text):
+    """Parse YYYYMM from text. Defaults to last month."""
+    # 2026年6月, 2026-06, 202606, 6月
+    m = re.search(r'(\d{4})\s*年\s*(\d{1,2})\s*月', text)
+    if m:
+        return f"{m.group(1)}{int(m.group(2)):02d}"
+    m = re.search(r'(\d{4})[/-](\d{1,2})', text)
+    if m:
+        return f"{m.group(1)}{int(m.group(2)):02d}"
+    m = re.search(r'(\d{6})', text)
+    if m:
+        return m.group(1)
+    m = re.search(r'(\d{1,2})\s*月', text)
+    if m:
+        return f"{date.today().year}{int(m.group(1)):02d}"
+    # Default to last month
+    d = date.today().replace(day=1) - timedelta(days=1)
+    return d.strftime("%Y%m")
+
+
 # ---------------------------------------------------------------------------
 # KPI report
 # ---------------------------------------------------------------------------
 
-def _query_kpi_day(ds_str):
+def _query_kpi_day(ds_str, game_config):
     """Query single-day KPI from data warehouse. Returns dict."""
-    game_id = config.GAME_ID
+    game_id = game_config.game_id
+    login_table = game_config.reports.get("login_table", config.REPORT_LOGIN_TABLE)
+    pay_table = game_config.reports.get("pay_table", config.REPORT_PAY_TABLE)
 
     dau_sql = (
         f"SELECT COUNT(DISTINCT account) as dau"
-        f" FROM {config.REPORT_LOGIN_TABLE}"
+        f" FROM {login_table}"
         f" WHERE game_id = {game_id} AND ds = '{ds_str}'"
         f" LIMIT 1"
     )
     pay_sql = (
         f"SELECT COUNT(DISTINCT account) as payers,"
         f" COALESCE(SUM(CAST(money AS DOUBLE)), 0) as revenue"
-        f" FROM {config.REPORT_PAY_TABLE}"
+        f" FROM {pay_table}"
         f" WHERE game_id = {game_id} AND ds = '{ds_str}'"
         f" LIMIT 1"
     )
@@ -122,14 +148,16 @@ def _query_kpi_day(ds_str):
     }
 
 
-def daily_kpi(question):
+def daily_kpi(question, game_config=None):
     """Run KPI report. Returns (summary_text, csv_path)."""
+    if game_config is None:
+        game_config = config.game_config()
     account_cache.refresh()
     dates = _parse_dates(question)
     if len(dates) > _MAX_RANGE_DAYS:
         dates = dates[-_MAX_RANGE_DAYS:]
 
-    rows = [_query_kpi_day(_ds(d)) for d in dates]
+    rows = [_query_kpi_day(_ds(d), game_config) for d in dates]
 
     if len(rows) == 1:
         r = rows[0]
@@ -158,17 +186,20 @@ def daily_kpi(question):
 # LTV report
 # ---------------------------------------------------------------------------
 
-def daily_ltv(question):
+def daily_ltv(question, game_config=None):
     """Run LTV report by registration cohort. Returns (summary_text, csv_path)."""
+    if game_config is None:
+        game_config = config.game_config()
     account_cache.refresh()
-    game_id = config.GAME_ID
+    game_id = game_config.game_id
+    pay_table = game_config.reports.get("pay_table", config.REPORT_PAY_TABLE)
 
     # Fetch all pay records since ds_start
     pay_sql = (
         f"SELECT account, ds, CAST(money AS DOUBLE) as amount"
-        f" FROM {config.REPORT_PAY_TABLE}"
+        f" FROM {pay_table}"
         f" WHERE game_id = {game_id}"
-        f" AND ds >= '{config.DS_START}'"
+        f" AND ds >= '{game_config.ds_start}'"
         f" LIMIT {_LTV_MAX_ROWS}"
     )
     pay_rows = dataapi.run_sql_rows(pay_sql, max_rows=_LTV_MAX_ROWS)
@@ -217,10 +248,89 @@ def daily_ltv(question):
     return summary, csv_path
 
 
-def run(report_type, question):
+# ---------------------------------------------------------------------------
+# Month ranking pay report
+# ---------------------------------------------------------------------------
+
+def _last_day_of_month(year_month: str) -> str:
+    y = int(year_month[:4])
+    m = int(year_month[4:6])
+    _, last_day = calendar.monthrange(y, m)
+    return f"{year_month}{last_day:02d}"
+
+
+def month_rank_pay(question, game_config=None, top_n=_MONTH_RANK_PAY_TOP_N):
+    """Query recharge for top ranking players of a month. Returns (summary, csv_path)."""
+    if game_config is None:
+        game_config = config.game_config()
+
+    year_month = _parse_year_month(question)
+    start_ds = f"{year_month}01"
+    end_ds = _last_day_of_month(year_month)
+
+    role_ranking_cache.init(game_config)
+    rank_map = role_ranking_cache.get_rank_map(
+        year_month=year_month, rank_type="MonthRank", top_n=top_n, game_config=game_config
+    )
+    role_ids = list(rank_map.keys())
+    if not role_ids:
+        return f"【{year_month} 月度排行榜充值】未找到上榜玩家", None
+
+    pay_table = game_config.reports.get("pay_table", config.REPORT_PAY_TABLE)
+    game_id = game_config.game_id
+
+    rows = []
+    # Batch IN clause to avoid oversized SQL
+    for i in range(0, len(role_ids), _IN_BATCH_SIZE):
+        batch = role_ids[i:i + _IN_BATCH_SIZE]
+        in_list = ",".join(f"'{rid}'" for rid in batch)
+        sql = (
+            f"SELECT CAST(role_id AS VARCHAR) AS role_id,"
+            f" COUNT(*) AS pay_times,"
+            f" COALESCE(SUM(CAST(money AS DOUBLE)), 0) AS total_money"
+            f" FROM {pay_table}"
+            f" WHERE game_id = {game_id}"
+            f" AND ds >= '{start_ds}' AND ds <= '{end_ds}'"
+            f" AND CAST(role_id AS VARCHAR) IN ({in_list})"
+            f" GROUP BY CAST(role_id AS VARCHAR)"
+        )
+        rows.extend(dataapi.run_sql_rows(sql, max_rows=len(batch)))
+
+    # Merge with rank
+    merged = []
+    for rid in role_ids:
+        found = next((r for r in rows if str(r.get("role_id")) == rid), None)
+        merged.append({
+            "排名": rank_map[rid],
+            "role_id": rid,
+            "充值次数": int(found.get("pay_times", 0)) if found else 0,
+            "充值金额": float(found.get("total_money", 0)) if found else 0.0,
+        })
+
+    total_money = sum(r["充值金额"] for r in merged)
+    payers = sum(1 for r in merged if r["充值金额"] > 0)
+    summary = (
+        f"【{year_month} 月度排行榜玩家充值 TOP {len(merged)}】\n"
+        f"上榜玩家数：{len(merged)}\n"
+        f"有充值人数：{payers}\n"
+        f"总充值金额：{total_money:.2f} 元"
+    )
+    csv_path = dquery.write_csv(merged)
+    return summary, csv_path
+
+
+# ---------------------------------------------------------------------------
+# Dispatch
+# ---------------------------------------------------------------------------
+
+def run(report_type, question, game_config=None):
     """Dispatch to the appropriate report function."""
+    if game_config is None:
+        game_config = config.game_config()
     if report_type == "kpi":
-        return daily_kpi(question)
+        return daily_kpi(question, game_config=game_config)
     if report_type == "ltv":
-        return daily_ltv(question)
+        return daily_ltv(question, game_config=game_config)
+    if report_type == "month_rank_pay":
+        return month_rank_pay(question, game_config=game_config)
     raise ValueError(f"未知报表类型: {report_type}")

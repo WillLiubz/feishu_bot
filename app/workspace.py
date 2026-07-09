@@ -41,6 +41,17 @@ _RULES_TEMPLATE = """\
     - 单次 SQL 日期跨度不超过 10 天，避免全月扫描超时
 12. 最终必须给出汇总结果，哪怕中间某步数据量有限也要基于实际数据得出结论
 13. 本月查询使用本月起始日期 {month_start}，不要自行推算
+14. 优先用子查询或临时结果，避免一次性 JOIN 多张大表
+15. ECO 日志表（roleitem / roleres / rolebehavior）位于 gameeco_raw，不是 gameeco_odl：
+    - roleitem: gameeco_raw.v_presto_log_roleitem
+    - roleres: gameeco_raw.v_presto_log_roleres
+    - rolebehavior: gameeco_raw.v_presto_log_rolebehavior
+    - 这些表的 role_id 是 BIGINT，与 VARCHAR 字段比较时必须 CAST(role_id AS VARCHAR)
+    - game_id 在 ECO 表中是字符串（如 '312'），比较时直接写 game_id = '312'
+16. 付费表 gamelog_raw.v_presto_log_payrecharge 的 role_id 通常也是 BIGINT，用 CAST(role_id AS VARCHAR) IN (...) 过滤
+17. 月度排行榜玩家充值类问题必须拆成两步：
+    - 第1步：从 gameeco_raw.v_presto_log_rolebehavior 查 b_type='MonthRank'，获取 role_id 列表
+    - 第2步：用 CAST(role_id AS VARCHAR) IN (...) 去 gamelog_raw.v_presto_log_payrecharge 查充值
 """
 
 _DENY_TOOLS = [
@@ -53,11 +64,14 @@ def _safe(s):
     return re.sub(r'[^a-zA-Z0-9_-]', '_', s)
 
 
-def prepare(chat_id, message_id, opgames=None):
+def prepare(chat_id, message_id, game_config=None, opgames=None):
     """
     Prepare per-chat workspace. Called before every query.
     Returns dict: {cwd, mcp_config, result_dir}
     """
+    if game_config is None:
+        game_config = config.game_config()
+
     ws_dir = _WORKSPACES_DIR / _safe(chat_id)
     ws_dir.mkdir(parents=True, exist_ok=True)
 
@@ -71,9 +85,10 @@ def prepare(chat_id, message_id, opgames=None):
     month_start = date.today().replace(day=1).strftime("%Y%m%d")
 
     # CLAUDE.md: rules + channel aliases + schema content
+    schema_path = _ROOT / game_config.schema
     schema_text = ""
-    if _SCHEMA_PATH.exists():
-        schema_text = _SCHEMA_PATH.read_text(encoding="utf-8")
+    if schema_path.exists():
+        schema_text = schema_path.read_text(encoding="utf-8")
         schema_text = schema_text.replace("<今天ds>", today).replace("<昨天ds>", yesterday)
 
     channel_block = ""
@@ -87,7 +102,7 @@ def prepare(chat_id, message_id, opgames=None):
 
     rules = _RULES_TEMPLATE.format(
         today=today, yesterday=yesterday, month_start=month_start,
-        game_id=config.GAME_ID, ds_start=config.DS_START,
+        game_id=game_config.game_id, ds_start=game_config.ds_start,
     )
     claude_md = rules + channel_block + user_scope + "\n" + schema_text
     (ws_dir / "CLAUDE.md").write_text(claude_md, encoding="utf-8")
@@ -118,6 +133,7 @@ def prepare(chat_id, message_id, opgames=None):
                     "--message-id", message_id,
                     "--opgame-ids", opgames_json,
                     "--mock", str(config.DATA_API_MOCK).lower(),
+                    "--game-id", str(game_config.game_id),
                 ],
                 "env": {},
             }

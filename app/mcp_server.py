@@ -1,5 +1,6 @@
 import argparse
 import json
+import re
 import sys
 import time
 from pathlib import Path
@@ -15,6 +16,19 @@ import store
 from fastmcp import FastMCP
 
 
+def _load_counter(result_dir: Path) -> int:
+    """Load the highest existing query_N.csv number to keep numbering across restarts."""
+    if not result_dir.exists():
+        return 0
+    max_n = 0
+    for p in result_dir.iterdir():
+        if p.is_file() and p.suffix == ".csv":
+            m = re.search(r'query_(\d+)\.csv$', p.name)
+            if m:
+                max_n = max(max_n, int(m.group(1)))
+    return max_n
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--result-dir", required=True)
@@ -22,12 +36,16 @@ def main():
     parser.add_argument("--message-id", required=True)
     parser.add_argument("--opgame-ids", default="[]")
     parser.add_argument("--mock", default="false")
+    parser.add_argument("--game-id", type=int, default=None)
     args = parser.parse_args()
 
     result_dir = Path(args.result_dir)
     chat_id = args.chat_id
     message_id = args.message_id
-    query_counter = [0]  # mutable counter shared across tool calls
+    query_counter = [_load_counter(result_dir)]
+
+    if args.game_id is not None:
+        config.GAME_ID = args.game_id
 
     sqlguard.REQUIRED_OPGAMES = json.loads(args.opgame_ids)
 
@@ -59,6 +77,7 @@ def main():
             (result_dir / f"query_{n}.sql").write_text(clean_sql, encoding="utf-8")
             latency_ms = int((time.time() - t0) * 1000)
             store.log_query(chat_id, message_id, clean_sql, len(rows), "ok", latency_ms)
+            print(f"[mcp_server] query_data ok rows={len(rows)} latency={latency_ms}ms", flush=True)
             columns = list(rows[0].keys()) if rows else []
             return {
                 "row_count": len(rows),

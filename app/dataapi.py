@@ -50,11 +50,16 @@ def _submit(sql):
     raise RuntimeError(f"数仓提交失败（重试 {config.DATA_API_MAX_RETRY} 次）: {last_err}")
 
 
+_POLL_INTERVAL = 5
+_POLL_MAX_ATTEMPTS = 108  # ~9 minutes total
+
+
 def _download_rows(task_id, max_rows):
     """Download TSV result, poll until ready, parse into list[dict]."""
     api_params = urllib.parse.quote(json.dumps({"task_id": task_id}))
+    t0 = time.time()
 
-    for attempt in range(108):  # poll up to 108 times (~9min)
+    for attempt in range(_POLL_MAX_ATTEMPTS):
         ts = str(int(time.time()))
         sign = generate_sign({
             "_key": config.DATA_API_KEY,
@@ -83,19 +88,20 @@ def _download_rows(task_id, max_rows):
                 if len(rows) >= max_rows:
                     break
                 rows.append(dict(zip(headers, line)))
+            elapsed_ms = int((time.time() - t0) * 1000)
+            print(f"[dataapi] download ready rows={len(rows)} latency={elapsed_ms}ms", flush=True)
             return rows
 
         if "text/html" in content_type or resp.text.strip().startswith("<"):
             # Task not ready yet, wait and retry
-            if attempt < 59:
-                time.sleep(5)
+            if attempt < _POLL_MAX_ATTEMPTS - 1:
+                time.sleep(_POLL_INTERVAL)
                 continue
-        raise RuntimeError(f"数仓任务超时未完成 (task_id={task_id}，已等待 9 分钟)")
+        elapsed_sec = int(time.time() - t0)
+        raise RuntimeError(f"数仓任务超时未完成 (task_id={task_id}，已等待 {elapsed_sec} 秒)")
 
-        # Unknown content type — treat as error
-        raise RuntimeError(f"数仓返回异常 content-type={content_type}: {resp.text[:200]}")
-
-    raise RuntimeError(f"数仓下载重试耗尽 (task_id={task_id})")
+    elapsed_sec = int(time.time() - t0)
+    raise RuntimeError(f"数仓下载重试耗尽 (task_id={task_id}，已等待 {elapsed_sec} 秒)")
 
 
 

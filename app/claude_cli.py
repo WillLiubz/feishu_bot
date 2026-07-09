@@ -2,6 +2,9 @@ import json
 import os
 import subprocess
 import sys
+import time
+from pathlib import Path
+
 import config
 
 
@@ -45,21 +48,24 @@ def _parse(stdout_text):
     Returns (answer_text, session_id).
     Only raises RuntimeError when is_error=True (subtype check removed entirely).
     """
+    t_parse = time.time()
     data = json.loads(stdout_text)
     result = str(data.get("result", ""))
     session_id = str(data.get("session_id", ""))
     if data.get("is_error"):
         raise RuntimeError(f"Claude 返回错误: {result[:300]}")
+    print(f"[claude_cli] parse done in {int((time.time() - t_parse) * 1000)}ms", flush=True)
     return result, session_id
 
 
-def run(question, ws, session_id=None, _retry=0):
+def run(question, ws, session_id=None, _retry=0, system_prompt=None):
     """
     Spawn claude subprocess. Feed question via stdin.
     Returns (answer_text, new_session_id).
     ws: dict from workspace.prepare() with keys: cwd, mcp_config, result_dir
     Raises RuntimeError on timeout or process error.
     """
+    t0 = time.time()
     cli = config.CLAUDE_CLI_PATH
 
     if sys.platform == "win32":
@@ -81,6 +87,11 @@ def run(question, ws, session_id=None, _retry=0):
     if session_id:
         cmd += ["--resume", session_id]
 
+    full_prompt = question
+    if system_prompt:
+        full_prompt = f"<system>\n{system_prompt}\n</system>\n\n{question}"
+
+    print(f"[claude_cli] spawn: {cli} cwd={ws['cwd']} session={session_id} retry={_retry}", flush=True)
     proc = subprocess.Popen(
         cmd,
         cwd=ws["cwd"],
@@ -92,10 +103,12 @@ def run(question, ws, session_id=None, _retry=0):
     )
 
     try:
+        t_comm = time.time()
         stdout, stderr = proc.communicate(
-            input=question.encode("utf-8"),
+            input=full_prompt.encode("utf-8"),
             timeout=config.CLAUDE_CLI_TIMEOUT,
         )
+        print(f"[claude_cli] communicate wait {int((time.time() - t_comm) * 1000)}ms", flush=True)
     except subprocess.TimeoutExpired:
         _kill_tree(proc)
         raise RuntimeError("处理超时")
@@ -104,7 +117,7 @@ def run(question, ws, session_id=None, _retry=0):
 
     if proc.returncode != 0:
         if session_id and _is_session_invalid(stderr_text) and _retry == 0:
-            return run(question, ws, session_id=None, _retry=1)
+            return run(question, ws, session_id=None, _retry=1, system_prompt=system_prompt)
         raise RuntimeError(f"Claude 异常退出 (rc={proc.returncode}): {stderr_text[:400]}")
 
     stdout_text = stdout.decode("utf-8", errors="replace")
@@ -119,5 +132,11 @@ def run(question, ws, session_id=None, _retry=0):
         else:
             raise
     if session_id and _retry == 0 and _is_tool_missing(answer):
-        return run(question, ws, session_id=None, _retry=1)
+        return run(question, ws, session_id=None, _retry=1, system_prompt=system_prompt)
+    print(f"[claude_cli] total {int((time.time() - t0) * 1000)}ms", flush=True)
     return answer, new_sid
+
+
+def run_with_system_prompt(question, ws, system_prompt, session_id=None, _retry=0):
+    """Convenience wrapper that injects a system prompt before the user question."""
+    return run(question, ws, session_id, _retry, system_prompt=system_prompt)
