@@ -4,6 +4,22 @@
 
 一个基于飞书机器人 + Claude CLI + MCP 的数据仓库查询服务。用户用中文向飞书机器人提问，Bot 调用 Claude CLI 生成并执行 Presto SQL，返回中文总结和 CSV/Excel 结果。
 
+## 游戏源码参考
+
+- **游戏 ID 312 服务端代码库**：`C:\YZ_SVN\女3_ProGoddessIII\branches\server`
+  - 用于核对玩家行为日志、道具获得/消耗日志与数仓表（`gamelog_raw` / `gameeco_raw` / `gamelog_odl`）的映射关系。
+
+### 312 道具/玩家行为日志映射（从源码确认）
+
+| 行为 | 代码入口 | change_type | 推荐数仓表 |
+|---|---|---|---|
+| 玩家获得道具 | `src/ns3/aes_game/module_item.go` → `execReward` → `Log_RoleItem` | `1` | `gameeco_raw.v_presto_log_roleitem` |
+| 玩家使用/消耗道具 | `src/ns3/aes_game/module_item.go` → `method_execConsume` → `Log_RoleItem` | `2` | `gameeco_raw.v_presto_log_roleitem` |
+| 货币/资源变动 | `Log_RoleRes` | `1`=获得 / `2`=消耗 | `gameeco_raw.v_presto_log_roleres` |
+| 玩法参与/高阶行为 | `Log_RoleBehavior` / `BhBehavior` | — | `gameeco_raw.v_presto_log_rolebehavior` / `gamelog_raw.v_presto_log_bhbehavior` |
+
+> **注意**：行为日志 `RoleBehavior` 没有 `item_id` / 数量字段；要查“玩家获得/使用了哪些道具、各多少”，必须走 `gameeco_raw.v_presto_log_roleitem`。常用过滤：`game_id = 312`、`substr(server_id, 5, 1) != '4'`、`role_type = 1`。
+
 ## 目录结构
 
 ```
