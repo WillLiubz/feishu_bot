@@ -51,7 +51,7 @@ def test_extract_json_invalid():
 
 def test_plan_invalid_json_raises_runtime_error(tmp_path):
     ws = {"cwd": str(tmp_path), "mcp_config": str(tmp_path / "mcp.json"), "result_dir": str(tmp_path / "results")}
-    with patch.object(query_planner.claude_cli, "run_with_system_prompt", return_value="not json"):
+    with patch.object(query_planner.claude_cli, "run_with_system_prompt", return_value=("not json", "")):
         with pytest.raises(RuntimeError):
             query_planner.plan("question", ws)
 
@@ -64,7 +64,7 @@ def test_plan_caps_at_five_steps(tmp_path):
             for i in range(10)
         ]
     })
-    with patch.object(query_planner.claude_cli, "run_with_system_prompt", return_value=planner_output):
+    with patch.object(query_planner.claude_cli, "run_with_system_prompt", return_value=(planner_output, "")):
         plan = query_planner.plan("question", ws)
     assert len(plan.steps) == 5
 
@@ -87,10 +87,10 @@ def test_run_planned(tmp_path):
 
     def fake_run(prompt, ws, system_prompt):
         if "查询规划器" in system_prompt or "plan" in system_prompt.lower():
-            return planner_output
+            return (planner_output, "")
         if "前面步骤" in system_prompt or "当前步骤" in system_prompt:
-            return step_outputs.pop(0)
-        return summary_output
+            return (step_outputs.pop(0), "")
+        return (summary_output, "")
 
     with patch.object(query_planner.claude_cli, "run_with_system_prompt", side_effect=fake_run):
         result = query_planner.run_planned("question", ws)

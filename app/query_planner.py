@@ -120,7 +120,7 @@ def plan(question: str, ws: dict) -> Plan:
     """Ask planner LLM to break question into steps."""
     system_prompt = _PLANNER_SYSTEM_PROMPT
     try:
-        answer = claude_cli.run_with_system_prompt(question, ws, system_prompt)
+        answer, _ = claude_cli.run_with_system_prompt(question, ws, system_prompt)
         data = _extract_json(answer)
     except (json.JSONDecodeError, ValueError) as e:
         raise RuntimeError(f"查询规划失败: {e}") from e
@@ -152,7 +152,7 @@ def execute_step(step: PlanStep, step_n: int, total_n: int, ws: dict, prev_summa
         goal=step.goal,
         sql_hint=step.sql_hint,
     )
-    answer = claude_cli.run_with_system_prompt("请执行当前步骤", ws, system_prompt)
+    answer, _ = claude_cli.run_with_system_prompt("请执行当前步骤", ws, system_prompt)
     return answer
 
 
@@ -192,7 +192,8 @@ def summarize(question: str, ws: dict, summaries: List[str]) -> str:
     """Ask LLM to summarize all query_N.csv results."""
     step_summaries = _build_step_summaries(ws["result_dir"], summaries)
     system_prompt = _SUMMARY_SYSTEM_PROMPT_TEMPLATE.format(step_summaries=step_summaries)
-    return claude_cli.run_with_system_prompt(question, ws, system_prompt)
+    answer, _ = claude_cli.run_with_system_prompt(question, ws, system_prompt)
+    return answer
 
 
 def run_planned(question: str, ws: dict) -> str:
