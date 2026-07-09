@@ -19,7 +19,7 @@
 
 **不做**：结构化表单查询、Excel 导出、Web 前端、角色权限/多用户管理。
 
-**多项目复用**：`app/` 目录零业务配置，换项目只改根目录 `config.json` 和 `schema.md`，其余代码不动。
+**多项目复用**：`app/` 目录零业务配置，换项目只改根目录 `config.json` 和 `schema_312.md`，其余代码不动。
 
 ---
 
@@ -47,7 +47,7 @@ feishu_bot/
 │   ├── account_dim.db
 │   └── workspaces/
 ├── config.json            # ★ 项目差异化配置
-├── schema.md              # ★ 数仓表结构 + few-shot（项目独立编写）
+├── schema_312.md          # ★ 数仓表结构 + few-shot（项目独立编写）
 ├── run_bot.bat            # 前台启动 + 崩溃 10s 自重启
 └── start_all.bat          # 一键启动 bot + logview
 ```
@@ -108,7 +108,7 @@ feishu_bot/
 
 ---
 
-## 5. schema.md 结构约定
+## 5. schema_312.md 结构约定
 
 纯 Markdown，直接注入每个聊天的 `CLAUDE.md`：
 
@@ -126,7 +126,7 @@ feishu_bot/
 （KPI/LTV 等指标定义，供 reports.py 参考）
 ```
 
-`workspace.py` 读取 `schema.md` 全文注入 `CLAUDE.md`，`<今天ds>` / `<昨天ds>` 占位符在注入时替换为真实日期。
+`workspace.py` 读取 `schema_312.md` 全文注入 `CLAUDE.md`，`<今天ds>` / `<昨天ds>` 占位符在注入时替换为真实日期。
 
 ---
 
@@ -216,7 +216,7 @@ Python 3.9+，其余用标准库。
 
 1. 复制 `feishu_bot/` 目录
 2. 修改 `config.json`（填新项目飞书凭证、game_id、渠道配置、数仓凭证）
-3. 重写 `schema.md`（填新项目表结构和示例 SQL）
+3. 重写 `schema_312.md`（填新项目表结构和示例 SQL）
 4. 双击 `run_bot.bat` 启动
 
 ---

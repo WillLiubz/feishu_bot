@@ -22,7 +22,7 @@
 | `app/dquery.py` | 查询结果写入 UTF-8 BOM CSV，并合并多 sheet Excel |
 | `app/reports.py` | KPI / LTV 固定报表旁路 |
 | `app/store.py` | SQLite 记录消息、会话、查询日志 |
-| `schema.md` | 数仓表结构、字段说明、示例 SQL |
+| `schema_312.md` | 数仓表结构、字段说明、示例 SQL |
 | `config.json` | 项目配置：飞书凭证、game_id、数仓凭证、模型等 |
 
 ---
@@ -33,7 +33,7 @@
 
 | 脚本 | 作用 | 常用命令 |
 |---|---|---|
-| `test_sqlguard.py` | 扫描 `schema.md` 中的示例 SQL，逐一验证 SQL 护栏 | `python debug/test_sqlguard.py` |
+| `test_sqlguard.py` | 扫描 `schema_312.md` 中的示例 SQL，逐一验证 SQL 护栏 | `python debug/test_sqlguard.py` |
 | `test_dataapi.py` | 测试数仓 API 连通性 | `python debug/test_dataapi.py --mock` |
 | `test_workspace.py` | 生成工作区并检查三个配置文件 | `python debug/test_workspace.py --keep` |
 | `test_mcp_server.py` | 直接复现 `query_data` 完整流程 | `python debug/test_mcp_server.py "SELECT ..."` |
@@ -60,7 +60,7 @@ python debug/run_all_checks.py
 
 | 检查项 | 结果 | 说明 |
 |---|---|---|
-| SQL 护栏 | `[OK]` | `schema.md` 中 20 条示例 SQL 全部通过 `sqlguard.sanitize()` |
+| SQL 护栏 | `[OK]` | `schema_312.md` 中 20 条示例 SQL 全部通过 `sqlguard.sanitize()` |
 | 数仓 API | `[OK]` | mock 模式返回正常；真实模式已验证可查到数据 |
 | 工作区生成 | `[OK]` | `CLAUDE.md` / `mcp.json` / `.claude/settings.json` 生成正确 |
 | MCP `query_data` | `[OK]` | 真实数仓查询返回 2778 行示例，CSV 写入成功 |
@@ -75,17 +75,17 @@ python debug/run_all_checks.py
 
 ### 5.1 `test_sqlguard.py`
 
-默认从 `schema.md` 提取 `SELECT` / `WITH` 示例 SQL，并逐一验证。
+默认从 `schema_312.md` 提取 `SELECT` / `WITH` 示例 SQL，并逐一验证。
 
 ```powershell
-# 验证 schema.md 中所有示例
+# 验证 schema_312.md 中所有示例
 python debug/test_sqlguard.py
 
 # 验证单条 SQL
 python debug/test_sqlguard.py "SELECT COUNT(*) FROM t WHERE game_id = 312 AND ds = '20260630'"
 ```
 
-> 注意：`schema.md` 中示例 SQL 使用 `<昨天ds>` / `<今天ds>` 占位符，会被护栏放行（因为占位符本身不影响语法检查），实际注入 `CLAUDE.md` 时由 `workspace.py` 替换为真实日期。
+> 注意：`schema_312.md` 中示例 SQL 使用 `<昨天ds>` / `<今天ds>` 占位符，会被护栏放行（因为占位符本身不影响语法检查），实际注入 `CLAUDE.md` 时由 `workspace.py` 替换为真实日期。
 
 ### 5.2 `test_dataapi.py`
 
@@ -163,7 +163,7 @@ python -m pytest tests/ -v
 ## 7. 已知注意点
 
 1. **mock 模式**：`config.json` 中 `data_api.mock` 为 `false`，所以调试脚本默认会真实访问数仓。只想本地跑不通网时，请加 `--mock`。
-2. **日期占位符**：`schema.md` 中的 `<昨天ds>` / `<今天ds>` / `<7天前ds>` 等占位符是设计如此，`workspace.py` 注入 `CLAUDE.md` 时会替换。
+2. **日期占位符**：`schema_312.md` 中的 `<昨天ds>` / `<今天ds>` / `<7天前ds>` 等占位符是设计如此，`workspace.py` 注入 `CLAUDE.md` 时会替换。
 3. **Windows 控制台乱码**：调试脚本已强制 `stdout` / `stderr` 使用 UTF-8，避免中文/emoji 在 GBK 控制台下乱码。
 4. **权限配置**：当前 `bot.whitelist` 为 `false`，所有用户均可使用。如需按用户限制渠道，修改 `config.json` 中 `bot.user_opgames`。
 5. **dataapi 轮询超时提示**：`app/dataapi.py` 中“已等待 9 分钟”的提示与实际轮询次数（59 次 × 5 秒 ≈ 5 分钟）不完全一致。若后续出现下载超时，可优先检查此处逻辑。

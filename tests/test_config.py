@@ -12,7 +12,7 @@ def _write_config(tmp_path, overrides=None):
             {
                 "game_id": 312,
                 "ds_start": "20260615",
-                "schema": "schema.md",
+                "schema": "schema_312.md",
                 "aliases": ["女3"],
                 "reports": {
                     "login_table": "gamelog_raw.log_rolelogin",

@@ -9,7 +9,6 @@ import config
 
 _ROOT = Path(config._ROOT)
 _APP_DIR = Path(__file__).parent
-_SCHEMA_PATH = _ROOT / "schema.md"
 _WORKSPACES_DIR = _ROOT / "data" / "workspaces"
 
 _RULES_TEMPLATE = """\

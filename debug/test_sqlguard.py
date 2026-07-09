@@ -5,7 +5,7 @@
     python debug/test_sqlguard.py
     python debug/test_sqlguard.py "SELECT * FROM t WHERE game_id = 312"
 
-默认会扫描 schema.md 中的示例 SQL（代码块内以 SELECT/WITH 开头），
+默认会扫描 schema_312.md 中的示例 SQL（代码块内以 SELECT/WITH 开头），
 并逐一测试它们能否通过 sqlguard.sanitize()。
 """
 import io
@@ -64,13 +64,13 @@ def _test_one(sql: str):
 
 def main():
     root = Path(__file__).parent.parent
-    schema_path = root / "schema.md"
+    schema_path = root / "schema_312.md"
 
     if len(sys.argv) > 1:
         sqls = [" ".join(sys.argv[1:])]
     else:
         sqls = _extract_sql_examples(schema_path)
-        print(f"从 schema.md 提取到 {len(sqls)} 条示例 SQL")
+        print(f"从 schema_312.md 提取到 {len(sqls)} 条示例 SQL")
 
     print(f"当前 game_id={config.GAME_ID}, ds_start={config.DS_START}")
 
@@ -84,7 +84,7 @@ def main():
 
     print(f"\n结果: 通过 {passed}, 失败 {failed}, 总计 {passed + failed}")
     if failed:
-        print("提示：schema.md 中的示例 SQL 如果包含 <昨天ds>/<今天ds> 等占位符，")
+        print("提示：schema_312.md 中的示例 SQL 如果包含 <昨天ds>/<今天ds> 等占位符，")
         print("      会被护栏拒绝。请替换为真实日期，或仅用于阅读参考。")
     return 0 if failed == 0 else 1
 

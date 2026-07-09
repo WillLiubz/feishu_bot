@@ -21,7 +21,7 @@ app/                # 主应用代码
   store.py          # SQLite 会话/日志/缓存
   config.py         # 配置读取
 config.json         # 运行时配置（含密钥，已 gitignored）
-schema.md           # 312 游戏表结构文档
+schema_312.md      # 312 游戏表结构文档
 schema_160.md       # 160 游戏表结构文档
 tests/              # pytest 单元测试
 debug/              # 调试脚本

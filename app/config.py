@@ -49,7 +49,7 @@ if _get("games"):
         gc = GameConfig(
             game_id=g["game_id"],
             ds_start=g.get("ds_start", "20200101"),
-            schema=g.get("schema", "schema.md"),
+            schema=g.get("schema", "schema_312.md"),
             aliases=g.get("aliases", []),
             reports=g.get("reports", {}),
             lock_opgame_ids=g.get("lock_opgame_ids", []),
@@ -91,7 +91,7 @@ def game_config(game_id=None) -> GameConfig:
     return GameConfig(
         game_id=game_id,
         ds_start=DS_START,
-        schema="schema.md",
+        schema="schema_312.md",
         aliases=[],
         reports={
             "login_table": REPORT_LOGIN_TABLE,

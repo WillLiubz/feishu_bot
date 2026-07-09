@@ -15,7 +15,7 @@ python debug/test_sqlguard.py
 
 | 脚本 | 作用 |
 |---|---|
-| `test_sqlguard.py` | 测试 SQL 护栏：验证 schema.md 中的示例 SQL 是否能通过校验 |
+| `test_sqlguard.py` | 测试 SQL 护栏：验证 schema_312.md 中的示例 SQL 是否能通过校验 |
 | `test_dataapi.py` | 测试数仓 API：mock 模式直接返回，真实模式会提交一条轻量 SQL |
 | `test_workspace.py` | 测试工作区生成：检查 CLAUDE.md / mcp.json / settings.json 是否正确 |
 | `test_mcp_server.py` | 直接调用 MCP 工具的 `query_data`（跳过 claude 子进程） |

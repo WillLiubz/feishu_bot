@@ -8,7 +8,7 @@
     python debug/test_churn_sql.py --sql-type churn_detail --days 14
     python debug/test_churn_sql.py --end-date 2026-06-29 --days 7
 
-SQL 来源：schema.md 示例 SQL 章节。
+SQL 来源：schema_312.md 示例 SQL 章节。
 """
 import argparse
 import io
