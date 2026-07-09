@@ -38,11 +38,12 @@ _PLANNER_SYSTEM_PROMPT = """\
 拆分原则：
 1. 每一步应该只查一张主表，或者一个明确的子问题
 2. 如果用户已经给了 role_id，第一步先确认/验证该 role_id 的付费或基础信息
-3. 道具获得情况查 gameeco_raw.v_presto_log_roleitem
+3. 道具获得情况查 gameeco_raw.v_presto_log_roleitem；字段包括：item_id, item_name, change_type, status_before, status_after, change_reason, change_module, relation_id
 4. 玩法参与情况查 gameeco_raw.v_presto_log_rolebehavior
 5. 付费情况查 gamelog_raw.v_presto_log_payrecharge
 6. 每一步的 sql_hint 必须包含数据库、表、game_id、ds、role_id 等关键信息
 7. 如果问题只涉及一个简单查询，只输出一步
+8. roleitem 表计算道具获得数量用 SUM(status_after - status_before)，按 item_id, item_name 分组，只保留 change_type = 1 的记录
 """
 
 
@@ -59,9 +60,11 @@ _STEP_SYSTEM_PROMPT_TEMPLATE = """\
 2. 查询必须带 game_id 分区条件
 3. ds 格式为 yyyyMMdd
 4. ECO 表（roleitem / rolebehavior）使用 gameeco_raw，不是 gameeco_odl
-5. 结果会自动保存到 results/query_N.csv
-6. 最后只返回一句中文总结：查到了什么，共多少行，关键 role_id / 数值是多少
-7. 不要输出 SQL 代码块，不要输出表格
+5. roleitem 表字段：item_id, item_name, change_type, status_before, status_after；计算获得数量用 SUM(status_after - status_before)，change_type=1 表示获得
+6. rolebehavior 表字段：b_type, b_value, zone_id, rank_before, rank_after, b_param, team_power
+7. 结果会自动保存到 results/query_N.csv
+8. 最后只返回一句中文总结：查到了什么，共多少行，关键 role_id / 数值是多少
+9. 不要输出 SQL 代码块，不要输出表格
 """
 
 
