@@ -177,11 +177,11 @@ def _handle_simple(client, chat_id, user_id, message_id, text, opgames, game_con
     t0 = time.time()
     new_sid = None
     try:
-        sid = store.get_session(chat_id)
+        sid = store.get_session(chat_id, game_config.game_id)
         ws = workspace.prepare(chat_id, message_id, game_config=game_config, opgames=opgames)
         _send_text(client, chat_id, "🔎 正在查询数仓，请稍候…")
         answer, new_sid = claude_cli.run(text, ws, sid)
-        store.set_session(chat_id, new_sid)
+        store.set_session(chat_id, new_sid, game_config.game_id)
         _send_text(client, chat_id, answer)
         _send_results(client, chat_id, ws)
         _send_query_summary(client, chat_id, message_id)

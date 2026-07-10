@@ -80,23 +80,28 @@ def log_out(chat_id, message_id, status, latency_ms, error=None, session_id=None
         conn.close()
 
 
-def get_session(chat_id):
+def _session_key(chat_id, game_id=None):
+    return f"{chat_id}:{game_id}" if game_id is not None else chat_id
+
+
+def get_session(chat_id, game_id=None):
     conn = _get_conn()
     try:
         row = conn.execute(
-            "SELECT claude_session_id FROM conversations WHERE chat_id=?", (chat_id,)
+            "SELECT claude_session_id FROM conversations WHERE chat_id=?",
+            (_session_key(chat_id, game_id),)
         ).fetchone()
         return row[0] if row else None
     finally:
         conn.close()
 
 
-def set_session(chat_id, session_id):
+def set_session(chat_id, session_id, game_id=None):
     conn = _get_conn()
     try:
         conn.execute(
             "INSERT OR REPLACE INTO conversations (chat_id,claude_session_id,updated_at) VALUES (?,?,?)",
-            (chat_id, session_id, int(time.time()))
+            (_session_key(chat_id, game_id), session_id, int(time.time()))
         )
         conn.commit()
     finally:

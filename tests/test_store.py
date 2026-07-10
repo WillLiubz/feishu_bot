@@ -39,6 +39,19 @@ def test_set_and_get_session(tmp_store):
     assert tmp_store.get_session("chat1") == "sess_abc"
 
 
+def test_set_and_get_session_per_game(tmp_store):
+    tmp_store.set_session("chat1", "sess_312", game_id=312)
+    tmp_store.set_session("chat1", "sess_160", game_id=160)
+    assert tmp_store.get_session("chat1", game_id=312) == "sess_312"
+    assert tmp_store.get_session("chat1", game_id=160) == "sess_160"
+
+
+def test_get_session_without_game_id_uses_default_key(tmp_store):
+    tmp_store.set_session("chat1", "sess_default")
+    assert tmp_store.get_session("chat1") == "sess_default"
+    assert tmp_store.get_session("chat1", game_id=312) is None
+
+
 def test_set_session_updates_existing(tmp_store):
     tmp_store.set_session("chat1", "sess_old")
     tmp_store.set_session("chat1", "sess_new")
