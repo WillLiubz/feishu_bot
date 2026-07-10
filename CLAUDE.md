@@ -8,6 +8,8 @@
 
 - **游戏 ID 312 服务端代码库**：`C:\YZ_SVN\女3_ProGoddessIII\branches\server`
   - 用于核对玩家行为日志、道具获得/消耗日志与数仓表（`gamelog_raw` / `gameeco_raw` / `gamelog_odl`）的映射关系。
+- **游戏 ID 160 服务端代码库**：`C:\YZ_SVN\女2_ProHaiwai_LOA2_Intranet\server`
+  - 用于核对 160 项目玩家行为日志与数仓表（`gamelog_raw` / `gamelog_odl`）的映射关系。
 
 ### 312 道具/玩家行为日志映射（从源码确认）
 
@@ -19,6 +21,18 @@
 | 玩法参与/高阶行为 | `Log_RoleBehavior` / `BhBehavior` | — | `gameeco_raw.v_presto_log_rolebehavior` / `gamelog_raw.v_presto_log_bhbehavior` |
 
 > **注意**：行为日志 `RoleBehavior` 没有 `item_id` / 数量字段；要查“玩家获得/使用了哪些道具、各多少”，必须走 `gameeco_raw.v_presto_log_roleitem`。常用过滤：`game_id = 312`、`substr(server_id, 5, 1) != '4'`、`role_type = 1`。
+
+### 160 道具/玩家行为日志映射（从源码确认）
+
+| 行为 | 代码入口 | rs_type / rs_behavior | 推荐数仓表 |
+|---|---|---|---|
+| 玩家获得道具 | `src/game/bag.go` → `AddItem` → `RsProduceLog` | `rs_type = 1`, `rs_behavior = 1` | `gamelog_odl.v_presto_log_rsproduce` |
+| 玩家使用/消耗道具 | `src/game/bag.go` → `consumeItemById` / `consumeItemByItemId` → `RsProduceLog` | `rs_type = 1`, `rs_behavior = 2` | `gamelog_odl.v_presto_log_rsproduce` |
+| 英雄/武将获得/消耗 | `src/game/...` → `RsProduceLog` | `rs_type = 2` | `gamelog_odl.v_presto_log_rsproduce` |
+| 货币/资源变动 | `PayConsume` / `PayGift` / `RsProduce(rs_type=3)` | — | `gamelog_odl.v_presto_log_payconsume` / `paygift` / `rsproduce` |
+| 玩法参与/高阶行为 | `src/depend/datacenter/BhBehavior.go` → `BehaviorLog` | — | `gamelog_odl.v_presto_log_bhbehavior` |
+
+> **注意**：游戏 160 **没有** `RoleItem` / `RoleRes` / `RoleBehavior` 分层，道具/资源统一走 `RsProduce` Action，数仓表为 `gamelog_odl.v_presto_log_rsproduce`。常用过滤：`game_id = 160`、`rs_type = 1`、`rs_behavior = 1/2`。`role_id` 是字符串，比较时加引号。
 
 ## 目录结构
 
