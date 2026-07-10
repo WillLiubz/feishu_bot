@@ -6,6 +6,7 @@ import account_cache
 import dataapi
 import dquery
 import role_ranking_cache
+import templates
 
 _MAX_RANGE_DAYS = 92
 _LTV_MAX_ROWS = 500000
@@ -320,6 +321,20 @@ def month_rank_pay(question, game_config=None, top_n=_MONTH_RANK_PAY_TOP_N):
 
 
 # ---------------------------------------------------------------------------
+# Player segment analysis report
+# ---------------------------------------------------------------------------
+
+def player_segment_report(question, game_config=None):
+    """Run player segmentation analytics report. Returns (summary, result_dir)."""
+    if game_config is None:
+        game_config = config.game_config()
+    summary, result_dir = templates.run_report(
+        "player_segment", question, game_config=game_config
+    )
+    return summary, result_dir
+
+
+# ---------------------------------------------------------------------------
 # Dispatch
 # ---------------------------------------------------------------------------
 
@@ -333,4 +348,6 @@ def run(report_type, question, game_config=None):
         return daily_ltv(question, game_config=game_config)
     if report_type == "month_rank_pay":
         return month_rank_pay(question, game_config=game_config)
+    if report_type == "player_segment":
+        return player_segment_report(question, game_config=game_config)
     raise ValueError(f"未知报表类型: {report_type}")

@@ -1236,3 +1236,48 @@ LIMIT 20
 - LTV7 / LTV15 / LTV30 同理
 
 充值数据来自 `gamelog_odl.v_presto_log_payrecharge`（game_id=312），通过 role_id 关联注册日分群。
+# 玩家分群行为分析模板
+
+模板文件：`app/templates/player_segment.json`
+
+## 分群口径
+
+| 群体 | 定义 |
+|---|---|
+| 付费玩家 | 分析窗口内有过真实货币充值（`gamelog_raw.v_presto_log_payrecharge`） |
+| 沉默玩家 | 分析窗口前 30 天内曾真实货币充值，但窗口内未充值 |
+| 免费玩家 | 分析窗口内活跃，且 `gameeco_raw.v_presto_snap_rolecache.role_paid = 0` |
+
+- 分析窗口默认：近 7 天（用户可在提问时覆盖，如“近14天”“上周”“2026-07-01~2026-07-07”）。
+- 沉默窗口默认：30 天。
+- Top 明细默认：每群 100 人。
+
+## 飞书触发词
+
+`玩家分群`、`付费点分析`、`沉默分析`、`免费玩家行为`、`玩家行为分析`
+
+## 输出 Sheet
+
+1. **概览**：三群人数、付费金额、付费渗透率、ARPU、ARPPU。
+2. **付费玩家付费点**：按 `pay_itemid` + `pay_type` 汇总充值金额、次数、客单价。
+3. **付费玩家玩法参与**：基于 `gameeco_odl.v_presto_log_rolebehavior`，对比付费玩家与全量活跃玩家的玩法参与率。
+4. **沉默玩家现状**：沉默玩家在分析窗口内的玩法参与、平均累计付费、沉默窗付费。
+5. **免费玩家行为**：免费玩家的玩法参与、平均活跃天数、等级/VIP 分布。
+6. **Top 明细**：付费 Top、沉默 Top、免费活跃 Top 名单。
+
+## 主要表
+
+- `gamelog_raw.v_presto_log_rolelogin` — 活跃玩家
+- `gamelog_raw.v_presto_log_payrecharge` — 真实货币充值
+- `gameeco_odl.v_presto_log_rolebehavior` — 玩法参与
+- `gameeco_raw.v_presto_snap_rolecache` — 累计付费、等级、VIP 快照
+
+## 示例
+
+输入：
+
+```
+312 玩家分群 近7天
+```
+
+输出：多 Sheet Excel，包含上述 6 个 Sheet。

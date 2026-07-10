@@ -1,4 +1,5 @@
 import json
+import os
 import re
 import threading
 import time
@@ -260,9 +261,18 @@ def _handle_report(client, chat_id, message_id, report_type, text, game_config):
     """Process a fixed report."""
     t0 = time.time()
     try:
-        summary, csv_path = reports.run(report_type, text, game_config=game_config)
+        summary, file_or_dir = reports.run(report_type, text, game_config=game_config)
         _send_text(client, chat_id, summary)
-        _send_file(client, chat_id, csv_path)
+        # Some reports return a result directory containing query_N.csv files
+        # that should be merged into a multi-sheet Excel.
+        if file_or_dir and os.path.isdir(file_or_dir):
+            xlsx_path = dquery.combine_to_excel(file_or_dir)
+            if xlsx_path and os.path.exists(xlsx_path):
+                _send_file(client, chat_id, xlsx_path, file_name="result.xlsx")
+            elif os.path.exists(file_or_dir + "/result.csv"):
+                _send_file(client, chat_id, file_or_dir + "/result.csv")
+        elif file_or_dir:
+            _send_file(client, chat_id, file_or_dir)
         store.log_out(chat_id, message_id, "ok", int((time.time() - t0) * 1000))
     except Exception as e:
         _send_text(client, chat_id, "报表生成失败，请稍后重试")
