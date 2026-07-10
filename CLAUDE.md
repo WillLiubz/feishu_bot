@@ -10,6 +10,8 @@
   - 用于核对玩家行为日志、道具获得/消耗日志与数仓表（`gamelog_raw` / `gameeco_raw` / `gamelog_odl`）的映射关系。
 - **游戏 ID 160 服务端代码库**：`C:\YZ_SVN\女2_ProHaiwai_LOA2_Intranet\server`
   - 用于核对 160 项目玩家行为日志与数仓表（`gamelog_raw` / `gamelog_odl`）的映射关系。
+- **游戏 ID 39 服务端代码库**：`C:\YZ_SVN\女1_后端_ProM_Dev\php_trunk`
+  - 用于核对 39 项目（女1）玩家行为日志与数仓表（`gamelog_raw` / `gamelog_odl`）的映射关系。
 
 ### 312 道具/玩家行为日志映射（从源码确认）
 
@@ -33,6 +35,25 @@
 | 玩法参与/高阶行为 | `src/depend/datacenter/BhBehavior.go` → `BehaviorLog` | — | `gamelog_raw.v_presto_log_bhbehavior` |
 
 > **注意**：游戏 160 **没有** `RoleItem` / `RoleRes` / `RoleBehavior` 分层，道具/资源统一走 `RsProduce` Action，默认数仓表为 `gamelog_raw.v_presto_log_rsproduce`（实时 T+0）。仅当用户明确要求 T+1 / odl 时才用 `gamelog_odl`，需要在 SQL 开头单独一行加 `-- use_odl`。常用过滤：`game_id = 160`、`rs_type = 1`、`rs_behavior = 1/2`。`role_id` 是字符串，比较时加引号。
+
+### 39 道具/玩家行为日志映射（从源码确认）
+
+| 行为 | 代码入口 | 类型字段 | 推荐数仓表 |
+|---|---|---|---|
+| 玩家登录 | `User::login()` → `Tracer::login_tracer` | `login_tracer = 1003` | `gamelog_raw.v_presto_log_login` |
+| 玩家注册/激活 | `UserRegister::register()` → `Tracer::register_tracer` | `register_tracer = 1002` | `gamelog_raw.v_presto_log_est` |
+| 充值 | `passport.php::chargeAction()` → `Tracer::cash_charge_tracer` / `direct_charge_tracer` | `600` / `601` | `gamelog_raw.v_presto_log_pay` |
+| 玩家获得钻石/货币 | `User::raiseField()` → `Logger::logExchangePack()` → `Tracer::cash_tracer` amount>0 | `category = 39_curr` | `gamelog_raw.v_presto_log_curr` |
+| 玩家消耗钻石/货币 | `User::reduceField()` → `Logger::logExchangeCost()` → `Tracer::cash_tracer` amount<0 | `category = 39_prop` / `39_sub` | `gamelog_raw.v_presto_log_prop` / `sub` |
+| 玩家获得道具/资源 | `UserBag::addItem()` → `Logger::logExchangePack()` | `log_exchange_pack_{m-d}` | `gamelog_raw.v_presto_log_exchange_pack` |
+| 玩家使用/消耗道具/资源 | `UserBag::useItem()` / `UserItem::useBid()` → `Logger::logExchangeCost()` | `log_exchange_cost_{m-d}` | `gamelog_raw.v_presto_log_exchange_cost` |
+| 纯物品变化（按月） | `Logger::logAll('t_log_item', ...)` | `type = '+' / '-'` | `gamelog_raw.v_presto_log_item` |
+| 活动参与次数 | `Logger::actvityNum()` | `log_activity_num` | `gamelog_raw.v_presto_log_activity_num` |
+| 活动领取 | `Logger::actvityReceive()` | `log_activity_receive` | `gamelog_raw.v_presto_log_activity_receive` |
+| 玩法/战斗参与 | `Logger::fightReportUp()` / `mineUp()` / `kingBet()` 等 | 各种 `log_*` | `gamelog_raw.v_presto_log_fight_report_up` / `mine_up` 等 |
+| 在线人数 / PCU | `UserCommon::getOnlineNum()` → `Tracer::user_online_tracer` | `1016` | `gamelog_raw.v_presto_log_ser` |
+
+> **注意**：游戏 39 源码中**没有** `RoleItem` / `RoleRes` / `RoleBehavior` 分层。运营数据中心（Scribe）只记录 `login/est/pay/curr/prop/sub/ser` 七类；道具/资源明细走 MySQL 日志队列（`log_exchange_pack/cost`、`t_log_item` 等），推断接入 Presto 后的视图名为 `gamelog_raw.v_presto_log_*`。默认走 `gamelog_raw`（实时 T+0），仅当用户明确要求 T+1/odl 时才用 `gamelog_odl`，需在 SQL 开头单独一行加 `-- use_odl`。`game_id = 39`，`uid`/`role_id` 可能是 BIGINT 或 VARCHAR，过滤时如果无结果可尝试切换引号形式。
 
 ## 目录结构
 
