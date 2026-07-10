@@ -11,7 +11,7 @@
 - **游戏 ID 160 服务端代码库**：`C:\YZ_SVN\女2_ProHaiwai_LOA2_Intranet\server`
   - 用于核对 160 项目玩家行为日志与数仓表（`gamelog_raw` / `gamelog_odl`）的映射关系。
 - **游戏 ID 39 服务端代码库**：`C:\YZ_SVN\女1_后端_ProM_Dev\php_trunk`
-  - 用于核对 39 项目（女1）玩家行为日志与数仓表（`gamelog_raw` / `gamelog_odl`）的映射关系。
+  - 用于核对 39 项目（女1）玩家行为日志与数仓表（`raw_scribe_log`）的映射关系。
 
 ### 312 道具/玩家行为日志映射（从源码确认）
 
@@ -38,22 +38,22 @@
 
 ### 39 道具/玩家行为日志映射（从源码确认）
 
-| 行为 | 代码入口 | 类型字段 | 推荐数仓表 |
-|---|---|---|---|
-| 玩家登录 | `User::login()` → `Tracer::login_tracer` | `login_tracer = 1003` | `gamelog_raw.v_presto_log_login` |
-| 玩家注册/激活 | `UserRegister::register()` → `Tracer::register_tracer` | `register_tracer = 1002` | `gamelog_raw.v_presto_log_est` |
-| 充值 | `passport.php::chargeAction()` → `Tracer::cash_charge_tracer` / `direct_charge_tracer` | `600` / `601` | `gamelog_raw.v_presto_log_pay` |
-| 玩家获得钻石/货币 | `User::raiseField()` → `Logger::logExchangePack()` → `Tracer::cash_tracer` amount>0 | `category = 39_curr` | `gamelog_raw.v_presto_log_curr` |
-| 玩家消耗钻石/货币 | `User::reduceField()` → `Logger::logExchangeCost()` → `Tracer::cash_tracer` amount<0 | `category = 39_prop` / `39_sub` | `gamelog_raw.v_presto_log_prop` / `sub` |
-| 玩家获得道具/资源 | `UserBag::addItem()` → `Logger::logExchangePack()` | `log_exchange_pack_{m-d}` | `gamelog_raw.v_presto_log_exchange_pack` |
-| 玩家使用/消耗道具/资源 | `UserBag::useItem()` / `UserItem::useBid()` → `Logger::logExchangeCost()` | `log_exchange_cost_{m-d}` | `gamelog_raw.v_presto_log_exchange_cost` |
-| 纯物品变化（按月） | `Logger::logAll('t_log_item', ...)` | `type = '+' / '-'` | `gamelog_raw.v_presto_log_item` |
-| 活动参与次数 | `Logger::actvityNum()` | `log_activity_num` | `gamelog_raw.v_presto_log_activity_num` |
-| 活动领取 | `Logger::actvityReceive()` | `log_activity_receive` | `gamelog_raw.v_presto_log_activity_receive` |
-| 玩法/战斗参与 | `Logger::fightReportUp()` / `mineUp()` / `kingBet()` 等 | 各种 `log_*` | `gamelog_raw.v_presto_log_fight_report_up` / `mine_up` 等 |
-| 在线人数 / PCU | `UserCommon::getOnlineNum()` → `Tracer::user_online_tracer` | `1016` | `gamelog_raw.v_presto_log_ser` |
+游戏 39 的 Scribe 数据中心日志统一落在 **`raw_scribe_log`** 库，表名与后端 `category` 后缀一致。查询时必须带 `game_id = 39`。
 
-> **注意**：游戏 39 源码中**没有** `RoleItem` / `RoleRes` / `RoleBehavior` 分层。运营数据中心（Scribe）只记录 `login/est/pay/curr/prop/sub/ser` 七类；道具/资源明细走 MySQL 日志队列（`log_exchange_pack/cost`、`t_log_item` 等），推断接入 Presto 后的视图名为 `gamelog_raw.v_presto_log_*`。默认走 `gamelog_raw`（实时 T+0），仅当用户明确要求 T+1/odl 时才用 `gamelog_odl`，需在 SQL 开头单独一行加 `-- use_odl`。`game_id = 39`，`uid`/`role_id` 可能是 BIGINT 或 VARCHAR，过滤时如果无结果可尝试切换引号形式。
+| 行为 | 代码入口 | 类型/字段 | 数仓表 |
+|---|---|---|---|
+| 玩家登录 | `User::login()` → `Tracer::login_tracer` | `login_tracer = 1003` | `raw_scribe_log.login` |
+| 玩家注册/激活 | `UserRegister::register()` → `Tracer::register_tracer` | `register_tracer = 1002` | `raw_scribe_log.est` |
+| 充值 | `passport.php::chargeAction()` → `Tracer::cash_charge_tracer` / `direct_charge_tracer` | `600` / `601` | `raw_scribe_log.pay` |
+| 玩家获得钻石/货币 | `User::raiseField()` → `Logger::logExchangePack()` → `Tracer::cash_tracer` amount>0 | `category = 39_curr` | `raw_scribe_log.curr` |
+| 玩家消耗钻石/货币 | `User::reduceField()` → `Logger::logExchangeCost()` → `Tracer::cash_tracer` amount<0 | `category = 39_prop` / `39_sub` | `raw_scribe_log.prop` / `sub` |
+| 在线人数 / PCU | `UserCommon::getOnlineNum()` → `Tracer::user_online_tracer` | `1016` | `raw_scribe_log.ser` |
+
+> **字段约定**：`raw_scribe_log.*` 表中的 `iuid` 是玩家内部唯一 ID，`ouid` 是平台账号/通行证；业务字段在 `custom_pra1` ~ `custom_pra8` 中，具体含义见 `schema_39.md`。**过滤游戏必须使用字符串 `gameid = '39'`，不要写 `game_id = 39`，后者会导致全表扫描超时。** 数值列（如 `custom_pra3`）在 Presto 中是 VARCHAR，求和/排序时必须 `CAST(... AS BIGINT)` 或 `CAST(... AS DOUBLE)`。
+>
+> **MySQL 日志队列**：`log_exchange_pack/cost`、`log_activity_num`、`t_log_item` 等是后端 MySQL 异步日志表，**未接入 `raw_scribe_log`**。若后续确认已同步到 Presto，再补充对应库表名；目前不要让 LLM 直接查询这些表。
+>
+> **库选择**：游戏 39 只使用 `raw_scribe_log`，不要使用 `gamelog_raw` / `gamelog_odl` / `gameeco_raw` 等 312/160 项目的库名。
 
 ## 目录结构
 
@@ -90,7 +90,7 @@ run_bot.bat         # Windows 启动脚本
   ```
 - **MCP server 子进程**：子 Claude CLI 只暴露 `mcp__dquery__query_data`，禁用其他工具（见 `.claude/settings.json`）。
 - **复杂查询**：`query_planner.is_complex()` 命中时，自动拆分为最多 5 步，每步一次 Claude CLI 调用，结果保存为 `results/query_N.csv`，最后合并为 `result.xlsx`。
-- **库选择**：默认 KPI/日志用 `gamelog_raw`；ECO 流水/行为/道具表用 `gameeco_raw`；只有用户明确要求 T+1/odl 时才用 `gamelog_odl`。
+- **库选择**：默认 KPI/日志用 `gamelog_raw`；ECO 流水/行为/道具表用 `gameeco_raw`；游戏 39 统一使用 `raw_scribe_log`；只有用户明确要求 T+1/odl 时才用 `gamelog_odl`。
 - **敏感信息**：`config.json` 已加入 `.gitignore`，不得提交。
 
 ## 常用命令

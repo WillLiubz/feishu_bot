@@ -90,10 +90,10 @@ def sanitize(sql):
     if m:
         raise SqlGuardError(f"包含禁止内容: {m.group()}")
 
-    # game_id must be present (check on original SQL)
+    # game_id / gameid must be present (check on original SQL)
     game_id = str(config.GAME_ID)
-    if not re.search(rf"game_id\s*=\s*'?{re.escape(game_id)}'?", sql, re.IGNORECASE):
-        raise SqlGuardError(f"SQL 必须包含 game_id = {game_id}")
+    if not re.search(rf"(game_id|gameid)\s*=\s*'?{re.escape(game_id)}'?", sql, re.IGNORECASE):
+        raise SqlGuardError(f"SQL 必须包含 game_id = {game_id} 或 gameid = '{game_id}'")
 
     # Channel lock
     lock_ids = [str(x) for x in config.LOCK_OPGAME_IDS]

@@ -34,13 +34,17 @@ _RULES_TEMPLATE = """\
    - 第2步：用第1步得到的 role_id 列表（IN ('id1','id2',...)）过滤第二张表
    - 第3步：如需继续关联，依此类推
 10. 每一步 SQL 独立执行，结果中间可见，不要把所有逻辑压缩进一条 SQL
-11. 跨月大表（roleitem / roleres / rolebehavior）查询策略：
+11. 跨月大表查询策略：
     - 优先拆成按周查询：第1周 ds BETWEEN {month_start} AND 第7天，第2周以此类推，最后合并
-    - 或先查 snap_itemcache 获取当前持有量，再用 roleitem 查最近几天的变化
     - 单次 SQL 日期跨度不超过 10 天，避免全月扫描超时
 12. 最终必须给出汇总结果，哪怕中间某步数据量有限也要基于实际数据得出结论
 13. 本月查询使用本月起始日期 {month_start}，不要自行推算
 14. 优先用子查询或临时结果，避免一次性 JOIN 多张大表
+
+{game_specific_rules}
+"""
+
+_DEFAULT_GAME_RULES = """\
 15. ECO 日志表（roleitem / roleres / rolebehavior）位于 gameeco_raw，不是 gameeco_odl：
     - roleitem: gameeco_raw.v_presto_log_roleitem
     - roleres: gameeco_raw.v_presto_log_roleres
@@ -52,6 +56,26 @@ _RULES_TEMPLATE = """\
     - 第1步：从 gameeco_raw.v_presto_log_rolebehavior 查 b_type='MonthRank'，获取 role_id 列表
     - 第2步：用 CAST(role_id AS VARCHAR) IN (...) 去 gamelog_raw.v_presto_log_payrecharge 查充值
 """
+
+_GAME_SPECIFIC_RULES = {
+    39: """\
+15. 游戏 39 统一使用 `raw_scribe_log` 库，表名与 behavior 类型对应：
+    - 登录：`raw_scribe_log.login`
+    - 注册/激活：`raw_scribe_log.est`
+    - 充值：`raw_scribe_log.pay`
+    - 加币/货币获得：`raw_scribe_log.curr`
+    - 消费钻石/货币：`raw_scribe_log.prop`
+    - GM 扣币：`raw_scribe_log.sub`
+    - 在线人数/PCU：`raw_scribe_log.ser`
+    字段含义参考 schema_39.md。
+16. **过滤游戏必须用字符串 `gameid = '39'`，绝对不要写 `game_id = 39`**；`game_id` 列虽然存在但会让 Presto 全表扫描，导致超时。
+17. 玩家唯一标识用 `iuid`（内部 uid），平台账号用 `ouid`。按玩家关联时用 `iuid`。
+18. 付费金额在 `raw_scribe_log.pay.custom_pra3`（字符串，需 CAST），付费类型在 `custom_pra1`（`1`=兑换游戏币，`2`=直购道具）。
+19. 系统参与/消费行为查 `raw_scribe_log.prop` 的 `custom_pra1`（来源 class.method，如 `UserLevy.levy`）和 `custom_pra3`（数量）。
+20. 不要使用 `gameeco_raw`、`gamelog_raw.v_presto_log_*` 等 312/160 项目的表名来查询游戏 39。
+21. `raw_scribe_log.*` 的数值列都是 VARCHAR，求和/排序时必须 `CAST(custom_pra3 AS BIGINT)` 或 `CAST(custom_pra3 AS DOUBLE)`。
+""",
+}
 
 _DENY_TOOLS = [
     "Bash", "Edit", "Write", "Read", "WebFetch", "WebSearch",
@@ -99,9 +123,13 @@ def prepare(chat_id, message_id, game_config=None, opgames=None):
     if opgames:
         user_scope = f"\n当前用户仅可查询以下渠道：{', '.join(str(o) for o in opgames)}\n"
 
+    game_specific_rules = _GAME_SPECIFIC_RULES.get(
+        game_config.game_id, _DEFAULT_GAME_RULES
+    )
     rules = _RULES_TEMPLATE.format(
         today=today, yesterday=yesterday, month_start=month_start,
         game_id=game_config.game_id, ds_start=game_config.ds_start,
+        game_specific_rules=game_specific_rules,
     )
     claude_md = rules + channel_block + user_scope + "\n" + schema_text
     (ws_dir / "CLAUDE.md").write_text(claude_md, encoding="utf-8")

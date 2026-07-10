@@ -33,6 +33,13 @@ def test_valid_select_passes():
     assert "SELECT" in result.upper()
 
 
+def test_valid_gameid_passes():
+    import sqlguard
+    sql = "SELECT COUNT(*) FROM raw_scribe_log.pay WHERE gameid = '312' AND ds = '20260709'"
+    result = sqlguard.sanitize(sql)
+    assert "SELECT" in result.upper()
+
+
 def test_auto_adds_limit():
     import sqlguard
     sql = "SELECT * FROM t WHERE game_id = 312 AND ds = '20260617'"
