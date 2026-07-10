@@ -63,4 +63,5 @@
 - 模板渲染使用标准库，不引入新依赖。
 - SQL 占位符必须是 `{key}` 形式，渲染时只替换已知参数。
 - 每条 SQL 必须包含对应游戏的 `game_id` / `gameid` 过滤，避免跨游戏扫描。
-- 312 使用 `gameeco_odl.v_presto_log_rolebehavior`（T+1 行为流水）；160 使用 `gamelog_raw.v_presto_log_bhbehavior`；39 使用 `raw_scribe_log.prop` 作为玩法/消费代理。
+- 312 使用 `gamelog_raw.v_presto_log_bhbehavior`（`b_type`）；160 使用 `gamelog_raw.v_presto_log_bhbehavior`（`b_id`）；39 使用 `raw_scribe_log.prop` 作为玩法/消费代理。
+- 为提升查询性能，312/160 的等级/VIP 使用 `max_by(column, ds)` 从 `rolelogin` 获取，不再使用窗口函数；160 概览的免费玩家直接通过“窗口内活跃且窗口+沉默窗口无付费”推导。

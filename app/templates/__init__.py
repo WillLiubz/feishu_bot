@@ -190,6 +190,14 @@ def run_report(template_name: str, question: str, game_config) -> tuple[str, str
                 for row in rows
             ]
 
+        # Apply per-cell value mapping if configured (e.g. pay_type code -> name).
+        value_map = sheet_def.get("value_map")
+        if value_map and rows:
+            for row in rows:
+                for col, mapping in value_map.items():
+                    if col in row:
+                        row[col] = mapping.get(str(row[col]), row[col])
+
         csv_path = result_dir / f"query_{idx}.csv"
         sql_path = result_dir / f"query_{idx}.sql"
         dquery.write_csv_to(rows, csv_path)

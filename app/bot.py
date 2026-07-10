@@ -261,6 +261,7 @@ def _handle_report(client, chat_id, message_id, report_type, text, game_config):
     """Process a fixed report."""
     t0 = time.time()
     try:
+        _send_text(client, chat_id, "📊 正在生成固定报表，请稍候…")
         summary, file_or_dir = reports.run(report_type, text, game_config=game_config)
         _send_text(client, chat_id, summary)
         # Some reports return a result directory containing query_N.csv files

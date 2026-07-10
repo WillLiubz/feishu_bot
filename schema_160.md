@@ -1140,13 +1140,13 @@ LIMIT 200
 |---|---|
 | 付费玩家 | 分析窗口内有过真实货币充值（`gamelog_raw.v_presto_log_payrecharge`） |
 | 沉默玩家 | 分析窗口前 30 天内曾真实货币充值，但窗口内未充值 |
-| 免费玩家 | 分析窗口内活跃，且 `gamelog_raw.v_presto_log_rolelogin.role_paid = 0` |
+| 免费玩家 | 分析窗口内活跃，且分析窗口 + 沉默窗口内均无真实货币充值 |
 
 - 分析窗口默认：近 7 天（用户可在提问时覆盖）。
 - 沉默窗口默认：30 天。
 - Top 明细默认：每群 100 人。
 
-> 注：SQL 内部使用英文列别名（如 `pay_amount`、`user_count`），输出 Excel 通过 `columns` 映射显示中文表头。
+> 注：SQL 内部使用英文列别名（如 `pay_amount`、`user_count`），输出 Excel 通过 `columns` 映射显示中文表头。为提升查询性能，160 模板概览不再读取 `rolelogin` 的 `role_paid`，免费玩家直接通过“窗口内活跃且窗口+沉默窗口无付费”推导。
 
 ### 飞书触发词
 
