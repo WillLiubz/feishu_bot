@@ -182,6 +182,14 @@ def run_report(template_name: str, question: str, game_config) -> tuple[str, str
         max_rows = sheet_def.get("max_rows", config.DATA_API_MAX_ROWS)
         rows = dataapi.run_sql_rows(sql, max_rows=max_rows)
 
+        # Apply Chinese display-name mapping if configured.
+        column_map = sheet_def.get("columns")
+        if column_map and rows:
+            rows = [
+                {column_map.get(k, k): v for k, v in row.items()}
+                for row in rows
+            ]
+
         csv_path = result_dir / f"query_{idx}.csv"
         sql_path = result_dir / f"query_{idx}.sql"
         dquery.write_csv_to(rows, csv_path)

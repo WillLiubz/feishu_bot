@@ -53,8 +53,10 @@
    - `{game_id}` / `{game_id_str}` — 游戏 ID
    - `{top_n}` — Top 明细行数
    - `{server_filter}` — 测试服过滤条件
-4. 在 `config.json` 的 `report_triggers.player_segment` 中保留触发词。
-5. 在对应 `schema_*.md` 中补充模板口径说明。
+4. **列别名必须使用英文**：数仓 SQL 解析器不支持中文列别名（如 `AS 测试` 会报错），因此 SELECT / GROUP BY / ORDER BY 中的列名/别名统一用英文。
+5. 每个 Sheet 提供 `columns` 映射（`英文别名 → 中文表头`），`run_report` 会在写 CSV 前自动转换，确保 Excel 输出仍为中文。
+6. 在 `config.json` 的 `report_triggers.player_segment` 中保留触发词。
+7. 在对应 `schema_*.md` 中补充模板口径说明。
 
 ## 开发注意事项
 

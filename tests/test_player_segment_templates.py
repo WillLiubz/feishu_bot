@@ -2,6 +2,7 @@
 
 import sys
 from datetime import date, datetime, timedelta
+from pathlib import Path
 
 import pytest
 
@@ -97,3 +98,49 @@ def test_server_filter_empty_for_39(template):
     gc = _GameConfig(39)
     params = templates.compute_params("近7天", gc, template["default_params"])
     assert params["server_filter"] == ""
+
+
+@pytest.mark.parametrize("game_id", [312, 160, 39])
+def test_all_column_aliases_are_ascii(template, game_id):
+    """Data API rejects Chinese column aliases, so SQL aliases must be ASCII."""
+    gc = _GameConfig(game_id)
+    params = templates.compute_params("近7天玩家分群", gc, template["default_params"])
+    sheets = template["games"][str(game_id)]
+    for key, sheet in sheets.items():
+        sql = templates.render_sql(sheet["sql"], params)
+        # Extract aliases after AS and ensure they are ASCII.
+        import re
+        aliases = re.findall(r"\bAS\s+(\w+)", sql, re.IGNORECASE)
+        for alias in aliases:
+            assert alias.isascii(), (
+                f"game={game_id} sheet={key} has non-ASCII alias: {alias}"
+            )
+
+
+@pytest.mark.parametrize("game_id", [312, 160, 39])
+def test_every_sheet_has_column_mapping(template, game_id):
+    sheets = template["games"][str(game_id)]
+    for key, sheet in sheets.items():
+        assert "columns" in sheet, f"game={game_id} sheet={key} missing columns mapping"
+        assert sheet["columns"], f"game={game_id} sheet={key} has empty columns mapping"
+
+
+def test_column_mapping_renames_output(template):
+    """run_report should rename dict keys according to the sheet's columns mapping."""
+    gc = _GameConfig(312)
+
+    # Patch dataapi to return predictable rows without hitting the network.
+    import dataapi
+    original_run_sql_rows = dataapi.run_sql_rows
+    def _mock_run_sql_rows(sql, max_rows=None):
+        return [{"segment": "paid", "user_count": "100", "pay_amount": "1234.56"}]
+    dataapi.run_sql_rows = _mock_run_sql_rows
+    try:
+        summary, result_dir = templates.run_report("player_segment", "近7天", gc)
+        csv_text = Path(result_dir).joinpath("query_1.csv").read_text(encoding="utf-8-sig")
+        # First data row should contain Chinese headers, not English aliases.
+        assert "分群" in csv_text
+        assert "人数" in csv_text
+        assert "充值金额" in csv_text
+    finally:
+        dataapi.run_sql_rows = original_run_sql_rows
