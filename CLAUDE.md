@@ -26,13 +26,13 @@
 
 | 行为 | 代码入口 | rs_type / rs_behavior | 推荐数仓表 |
 |---|---|---|---|
-| 玩家获得道具 | `src/game/bag.go` → `AddItem` → `RsProduceLog` | `rs_type = 1`, `rs_behavior = 1` | `gamelog_odl.v_presto_log_rsproduce` |
-| 玩家使用/消耗道具 | `src/game/bag.go` → `consumeItemById` / `consumeItemByItemId` → `RsProduceLog` | `rs_type = 1`, `rs_behavior = 2` | `gamelog_odl.v_presto_log_rsproduce` |
-| 英雄/武将获得/消耗 | `src/game/...` → `RsProduceLog` | `rs_type = 2` | `gamelog_odl.v_presto_log_rsproduce` |
-| 货币/资源变动 | `PayConsume` / `PayGift` / `RsProduce(rs_type=3)` | — | `gamelog_odl.v_presto_log_payconsume` / `paygift` / `rsproduce` |
-| 玩法参与/高阶行为 | `src/depend/datacenter/BhBehavior.go` → `BehaviorLog` | — | `gamelog_odl.v_presto_log_bhbehavior` |
+| 玩家获得道具 | `src/game/bag.go` → `AddItem` → `RsProduceLog` | `rs_type = 1`, `rs_behavior = 1` | `gamelog_raw.v_presto_log_rsproduce` |
+| 玩家使用/消耗道具 | `src/game/bag.go` → `consumeItemById` / `consumeItemByItemId` → `RsProduceLog` | `rs_type = 1`, `rs_behavior = 2` | `gamelog_raw.v_presto_log_rsproduce` |
+| 英雄/武将获得/消耗 | `src/game/...` → `RsProduceLog` | `rs_type = 2` | `gamelog_raw.v_presto_log_rsproduce` |
+| 货币/资源变动 | `PayConsume` / `PayGift` / `RsProduce(rs_type=3)` | — | `gamelog_raw.v_presto_log_payconsume` / `paygift` / `rsproduce` |
+| 玩法参与/高阶行为 | `src/depend/datacenter/BhBehavior.go` → `BehaviorLog` | — | `gamelog_raw.v_presto_log_bhbehavior` |
 
-> **注意**：游戏 160 **没有** `RoleItem` / `RoleRes` / `RoleBehavior` 分层，道具/资源统一走 `RsProduce` Action，数仓表为 `gamelog_odl.v_presto_log_rsproduce`。常用过滤：`game_id = 160`、`rs_type = 1`、`rs_behavior = 1/2`。`role_id` 是字符串，比较时加引号。
+> **注意**：游戏 160 **没有** `RoleItem` / `RoleRes` / `RoleBehavior` 分层，道具/资源统一走 `RsProduce` Action，默认数仓表为 `gamelog_raw.v_presto_log_rsproduce`（实时 T+0）。仅当用户明确要求 T+1 / odl 时才用 `gamelog_odl`，需要在 SQL 开头单独一行加 `-- use_odl`。常用过滤：`game_id = 160`、`rs_type = 1`、`rs_behavior = 1/2`。`role_id` 是字符串，比较时加引号。
 
 ## 目录结构
 
