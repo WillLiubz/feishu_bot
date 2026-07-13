@@ -12,6 +12,8 @@
   - 用于核对 160 项目玩家行为日志与数仓表（`gamelog_raw` / `gamelog_odl`）的映射关系。
 - **游戏 ID 39 服务端代码库**：`C:\YZ_SVN\女1_后端_ProM_Dev\php_trunk`
   - 用于核对 39 项目（女1）玩家行为日志与数仓表（`raw_scribe_log`）的映射关系。
+- **游戏 ID 255 服务端代码库**：`C:\YZ_SVN\女2_手游_M_00010\server`
+  - 用于核对 255 项目玩家行为日志与数仓表（`gamelog_raw` / `gameeco_raw`）的映射关系。
 
 ### 312 道具/玩家行为日志映射（从源码确认）
 
@@ -55,6 +57,32 @@
 >
 > **库选择**：游戏 39 只使用 `raw_scribe_log`，不要使用 `gamelog_raw` / `gamelog_odl` / `gameeco_raw` 等 312/160 项目的库名。
 
+### 255 道具/玩家行为日志映射（从源码确认）
+
+游戏 255 同时存在 **Scribe 实时 KPI 日志** 和 **DTS（Data Warehouse SDK）ECO 日志** 两套体系：
+
+- KPI 实时日志（登录/注册/充值/升级/在线/行为等）→ `gamelog_raw`
+- ECO 实时日志（角色/道具/资源/养成/行为/公会等快照与流水）→ `gameeco_raw`
+
+| 行为 | 代码入口 | 关键字段 | 推荐数仓表 |
+|---|---|---|---|
+| 玩家登录 | `server/core/player_state.go` → `EVENT_LOGIN` | — | `gamelog_raw.v_presto_log_rolelogin` |
+| 玩家注册/创角 | `server/core/base_scribe.go` → `TraceRoleReg` | — | `gamelog_raw.v_presto_log_rolereg` |
+| 充值 | `server/core/base_scribe.go` → `TracePayRecharge` | `pay_money = action.Amount / 100` | `gamelog_raw.v_presto_log_payrecharge` |
+| 钻石/货币获得 | `server/core/base_scribe.go` → `TraceDiamond` (amount>0) | `gift_type` | `gamelog_raw.v_presto_log_paygift` |
+| 钻石/货币消耗 | `server/core/base_scribe.go` → `TraceDiamond` (amount<0) | `consume_type` | `gamelog_raw.v_presto_log_payconsume` |
+| 通用资源（金币/体力/钻石等）变动 | `server/core/base_prize.go` → `commit_item` → `EVENT_ITEM_CHANGED` | `change_type = 产出/消耗` | `gameeco_raw.v_presto_log_roleres` |
+| 英雄获得 | `server/core/base_dts.go` → `EVENT_HERO_GET` → `RoleItem()` | `item_type = 英雄` | `gameeco_raw.v_presto_log_roleitem` |
+| 玩法参与/高阶行为 | `server/core/base_dts.go` → `createRoleBehaviorData()` | `b_type` / `b_id` / `b_param` | `gameeco_raw.v_presto_log_rolebehavior` |
+| 在线人数 / PCU | `server/core/base_scribe.go` → `EVENT_ACTIVE_CONNECTIONS` | `pcu` | `gamelog_raw.v_presto_log_serpcu` |
+
+> **注意**：
+> - 255 的 `gamelog_raw` 中 `role_id` 通常为**字符串**，`gameeco_raw` 中 `role_id` 为 **BIGINT**；过滤时注意类型匹配。
+> - `gameeco_raw` 的 `game_id` 为**字符串** `'255'`，`gamelog_raw` 的 `game_id` 为**整数** `255`。
+> - 默认所有查询走 RAW 库（`gamelog_raw` / `gameeco_raw`）；仅当用户明确要求 T+1 / ODL 时，在 SQL 开头加 `-- use_odl` 切换到 `gamelog_odl` / `gameeco_odl`。
+> - 常用过滤：`game_id = 255` / `game_id = '255'`、`SUBSTR(CAST(server_id AS VARCHAR), 5, 1) != '4'`（排除测试服）。
+> - 完整字段与示例 SQL 见 `schema_255.md`。
+
 ## 目录结构
 
 ```
@@ -74,6 +102,7 @@ app/                # 主应用代码
 config.json         # 运行时配置（含密钥，已 gitignored）
 schema_312.md      # 312 游戏表结构文档
 schema_160.md       # 160 游戏表结构文档
+schema_255.md       # 255 游戏表结构文档
 tests/              # pytest 单元测试
 debug/              # 调试脚本
 run_bot.bat         # Windows 启动脚本

@@ -111,8 +111,13 @@ def _policy(user_id):
     return True, list(val)
 
 
-def _resolve_game(text):
-    """Resolve game_id from text prefix or alias. Defaults to config.GAME_ID."""
+def _resolve_game(text, raise_on_missing=False):
+    """Resolve game_id from text prefix or alias. Defaults to config.GAME_ID.
+
+    If the user explicitly writes a game_id prefix and that game is not
+    configured, raise ValueError when raise_on_missing=True; otherwise fall
+    back to the default game for backwards compatibility.
+    """
     if not text:
         return config.game_config()
 
@@ -123,6 +128,11 @@ def _resolve_game(text):
         try:
             return config.game_config(gid)
         except ValueError:
+            if raise_on_missing:
+                raise ValueError(
+                    f"未配置游戏 {gid}，请联系管理员在 config.json 的 games 中添加对应配置。"
+                )
+            # Fall back to default game when not in strict mode.
             pass
 
     # Aliases
@@ -248,9 +258,8 @@ def _handle_planned(client, chat_id, user_id, message_id, text, opgames, game_co
             _active_chats.discard(chat_id)
 
 
-def _handle(client, chat_id, user_id, message_id, text, opgames):
+def _handle(client, chat_id, user_id, message_id, text, opgames, game_config):
     """Route a query to simple or planned handler based on complexity heuristic."""
-    game_config = _resolve_game(text)
     if query_planner.is_complex(text):
         _handle_planned(client, chat_id, user_id, message_id, text, opgames, game_config)
     else:
@@ -337,7 +346,11 @@ def _on_message(data):
             _send_text(client, chat_id, "当前查询较多，请稍后再试。")
             return
 
-        game_config = _resolve_game(text)
+        try:
+            game_config = _resolve_game(text, raise_on_missing=True)
+        except ValueError as e:
+            _send_text(client, chat_id, str(e))
+            return
 
         # Route: fixed report or LLM
         report_type = reports.match(text)
@@ -350,7 +363,7 @@ def _on_message(data):
         else:
             t = threading.Thread(
                 target=_handle,
-                args=(client, chat_id, user_id, message_id, text, opgames),
+                args=(client, chat_id, user_id, message_id, text, opgames, game_config),
                 daemon=True,
             )
 
