@@ -4,6 +4,20 @@
 
 一个基于飞书机器人 + Claude CLI + MCP 的数据仓库查询服务。用户用中文向飞书机器人提问，Bot 调用 Claude CLI 生成并执行 Presto SQL，返回中文总结和 CSV/Excel 结果。
 
+## 查询路由
+
+Bot 不再依赖固定关键词判断是否需要分步查询。每次提问时：
+
+1. `query_analyzer` 会读取当前 workspace 的 `CLAUDE.md`（含游戏 schema、表映射、业务规则）。
+2. 由 LLM 判断问题是否涉及：
+   - 跨多张表 JOIN
+   - 多时间段对比 / 归因
+   - 先找目标对象再查明细（如 Top 付费玩家 → 道具/行为）
+3. 若判定为复杂查询，自动拆分为最多 5 步，每步一次 SQL，结果合并为 Excel。
+4. 若 `CLAUDE.md` 中的表映射明显不足（少于 2 个库表提及），系统会自动扫描配置的游戏源码目录，补充日志函数 → 数仓表映射。
+
+默认所有查询仍走 RAW 库；只有用户明确要求 T+1/odl 时才加 `-- use_odl`。
+
 ## 游戏源码参考
 
 - **游戏 ID 312 服务端代码库**：`C:\YZ_SVN\女3_ProGoddessIII\branches\server`
