@@ -69,18 +69,22 @@ def _maybe_append_source_summary(claude_md_text: str, game_id: int | None) -> st
     import config
     import source_code_index
 
-    # Simple heuristic: if the document does not mention at least two warehouse tables,
-    # consider it incomplete and append source summary.
-    table_mentions = sum(1 for kw in ("gamelog_raw", "gameeco_raw", "raw_scribe_log") if kw in claude_md_text)
-    if table_mentions >= 2:
-        return claude_md_text
-    source_dirs = getattr(config, "GAME_SOURCE_DIRS", {})
-    source_dir = source_dirs.get(game_id)
-    if not source_dir:
-        return claude_md_text
-    summary = source_code_index.summarize_game_source(game_id, source_dir)
-    if summary:
-        return claude_md_text + "\n\n" + summary
+    try:
+        # Simple heuristic: if the document does not mention at least two warehouse tables,
+        # consider it incomplete and append source summary.
+        table_mentions = sum(1 for kw in ("gamelog_raw", "gameeco_raw", "raw_scribe_log") if kw in claude_md_text)
+        if table_mentions >= 2:
+            return claude_md_text
+        source_dirs = getattr(config, "GAME_SOURCE_DIRS", {})
+        source_dir = source_dirs.get(game_id)
+        if not source_dir:
+            return claude_md_text
+        summary = source_code_index.summarize_game_source(game_id, source_dir)
+        if summary:
+            return claude_md_text + "\n\n" + summary
+    except Exception:
+        # Source scanning is an optional augmentation; never let it break routing.
+        pass
     return claude_md_text
 
 
