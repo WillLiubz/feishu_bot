@@ -64,13 +64,34 @@ def _fallback_heuristic(question: str) -> AnalysisResult:
     return AnalysisResult(mode="simple", reason="未命中复杂查询规则", steps=[])
 
 
-def analyze(question: str, ws: dict, claude_md_text: str) -> AnalysisResult:
+def _maybe_append_source_summary(claude_md_text: str, game_id: int | None) -> str:
+    """If CLAUDE.md is short on table mappings, append source code summary."""
+    import config
+    import source_code_index
+
+    # Simple heuristic: if the document does not mention at least two warehouse tables,
+    # consider it incomplete and append source summary.
+    table_mentions = sum(1 for kw in ("gamelog_raw", "gameeco_raw", "raw_scribe_log") if kw in claude_md_text)
+    if table_mentions >= 2:
+        return claude_md_text
+    source_dirs = getattr(config, "GAME_SOURCE_DIRS", {})
+    source_dir = source_dirs.get(game_id)
+    if not source_dir:
+        return claude_md_text
+    summary = source_code_index.summarize_game_source(game_id, source_dir)
+    if summary:
+        return claude_md_text + "\n\n" + summary
+    return claude_md_text
+
+
+def analyze(question: str, ws: dict, claude_md_text: str, game_id: int | None = None) -> AnalysisResult:
     """
     Ask an LLM to decide whether the question is simple or planned based on
     the active CLAUDE.md business rules.
     """
+    augmented_md = _maybe_append_source_summary(claude_md_text, game_id)
     system_prompt = _ANALYZER_SYSTEM_PROMPT.format(
-        claude_md=claude_md_text,
+        claude_md=augmented_md,
         question=question,
     )
     try:

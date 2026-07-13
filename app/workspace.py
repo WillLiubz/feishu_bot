@@ -176,4 +176,13 @@ def prepare(chat_id, message_id, game_config=None, opgames=None):
         "cwd": str(ws_dir),
         "mcp_config": str(mcp_config_path),
         "result_dir": str(result_dir),
+        "claude_md_path": str(ws_dir / "CLAUDE.md"),
     }
+
+
+def get_claude_md_text(ws: dict) -> str:
+    """Read the rendered CLAUDE.md text for the active workspace."""
+    path = Path(ws.get("claude_md_path", Path(ws["cwd"]) / "CLAUDE.md"))
+    if path.exists():
+        return path.read_text(encoding="utf-8")
+    return ""
