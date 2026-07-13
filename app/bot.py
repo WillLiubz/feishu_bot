@@ -15,6 +15,7 @@ import claude_cli
 import config
 import dquery
 import names
+import query_analyzer
 import query_planner
 import reports
 import store
@@ -145,7 +146,6 @@ def _resolve_game(text, raise_on_missing=False):
 
     return config.game_config()
 
-
 def _send_query_summary(client, chat_id, message_id):
     """Send SQL execution details to Feishu after a query."""
     import sqlite3
@@ -222,13 +222,32 @@ def _handle_simple(client, chat_id, user_id, message_id, text, opgames, game_con
             _active_chats.discard(chat_id)
 
 
-def _handle_planned(client, chat_id, user_id, message_id, text, opgames, game_config):
-    """Process a complex query by splitting it into multiple planned steps."""
+def _run_planned_body(client, chat_id, message_id, text, ws):
+    """Shared body for planned query handlers. Returns answer text."""
+    answer = query_planner.run_planned(text, ws)
+    return answer
+
+
+def _run_planned_with_steps_body(client, chat_id, message_id, text, ws, steps):
+    """Shared body for planned query handlers with analyzer-provided steps."""
+    summaries = []
+    for i, step in enumerate(steps, start=1):
+        summary = query_planner.execute_step(step, i, len(steps), ws, summaries)
+        summaries.append(summary)
+    final_summary = query_planner.summarize(text, ws, summaries)
+    answer = "\n".join(f"第{i}步：{s}" for i, s in enumerate(summaries, start=1)) + "\n\n【总结】\n" + final_summary
+    return answer
+
+
+def _planned_handler(client, chat_id, user_id, message_id, text, opgames, game_config, ws, steps=None):
+    """Process a complex query. If steps is provided, execute them directly; otherwise plan first."""
     t0 = time.time()
     try:
-        ws = workspace.prepare(chat_id, message_id, game_config=game_config, opgames=opgames)
         _send_text(client, chat_id, "🔎 该问题较复杂，正在分步查询，请稍候…")
-        answer = query_planner.run_planned(text, ws)
+        if steps is not None:
+            answer = _run_planned_with_steps_body(client, chat_id, message_id, text, ws, steps)
+        else:
+            answer = _run_planned_body(client, chat_id, message_id, text, ws)
         _send_text(client, chat_id, answer)
         _send_results(client, chat_id, ws)
         _send_query_summary(client, chat_id, message_id)
@@ -258,9 +277,25 @@ def _handle_planned(client, chat_id, user_id, message_id, text, opgames, game_co
             _active_chats.discard(chat_id)
 
 
+def _handle_planned(client, chat_id, user_id, message_id, text, opgames, game_config):
+    """Process a complex query by splitting it into multiple planned steps."""
+    ws = workspace.prepare(chat_id, message_id, game_config=game_config, opgames=opgames)
+    _planned_handler(client, chat_id, user_id, message_id, text, opgames, game_config, ws, steps=None)
+
+
+def _handle_planned_with_steps(client, chat_id, user_id, message_id, text, opgames, game_config, ws, steps):
+    """Process a complex query using analyzer-provided steps."""
+    _planned_handler(client, chat_id, user_id, message_id, text, opgames, game_config, ws, steps=steps)
+
+
 def _handle(client, chat_id, user_id, message_id, text, opgames, game_config):
-    """Route a query to simple or planned handler based on complexity heuristic."""
-    if query_planner.is_complex(text):
+    """Route a query to simple or planned handler based on LLM analysis."""
+    ws = workspace.prepare(chat_id, message_id, game_config=game_config, opgames=opgames)
+    claude_md_text = workspace.get_claude_md_text(ws)
+    result = query_analyzer.analyze(text, ws, claude_md_text)
+    if result.mode == "planned" and result.steps:
+        _handle_planned_with_steps(client, chat_id, user_id, message_id, text, opgames, game_config, ws, result.steps)
+    elif result.mode == "planned":
         _handle_planned(client, chat_id, user_id, message_id, text, opgames, game_config)
     else:
         _handle_simple(client, chat_id, user_id, message_id, text, opgames, game_config)
