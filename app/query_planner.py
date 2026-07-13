@@ -154,6 +154,13 @@ def is_complex(text: str) -> bool:
     return (score >= 3 and has_dimension) or cross_dimension or multi_period
 
 
+def decide_steps(question: str, ws: dict, claude_md_text: str) -> tuple[bool, List[PlanStep]]:
+    """Decide whether a question needs planned execution and return planned steps."""
+    import query_analyzer
+    result = query_analyzer.analyze(question, ws, claude_md_text)
+    return result.mode == "planned", list(result.steps)
+
+
 def plan(question: str, ws: dict) -> Plan:
     """Ask planner LLM to break question into steps."""
     system_prompt = _PLANNER_SYSTEM_PROMPT
