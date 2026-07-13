@@ -126,8 +126,32 @@ def is_complex(text: str) -> bool:
     # and need to be split (e.g. find top payer first, then query their behavior).
     has_payment = "付费" in lowered or "充值" in lowered
     cross_dimension = has_payment and has_dimension
+
+    # Multi-period / comparison / root-cause analysis usually requires querying
+    # the same metric across several date windows and then comparing them.
+    # Treat these as complex so the planner splits them into per-period steps.
+    comparison_indicators = [
+        "对比",
+        "比较",
+        "差异",
+        "同比",
+        "环比",
+        "衰减",
+        "下降",
+        "原因",
+        "为什么",
+    ]
+    date_range_patterns = [
+        r"\d{1,2}\s*月\s*\d{1,2}",
+        r"\d{4}[/-]\d{1,2}[/-]\d{1,2}",
+        r"\d{8}",
+    ]
+    has_comparison = any(kw in lowered for kw in comparison_indicators)
+    date_range_count = sum(len(re.findall(p, lowered)) for p in date_range_patterns)
+    multi_period = has_comparison and date_range_count >= 2
+
     # Need at least a concrete entity + multiple dimensions
-    return (score >= 3 and has_dimension) or cross_dimension
+    return (score >= 3 and has_dimension) or cross_dimension or multi_period
 
 
 def plan(question: str, ws: dict) -> Plan:

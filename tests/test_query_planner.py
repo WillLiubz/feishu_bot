@@ -33,6 +33,15 @@ def test_is_complex_payment_plus_behavior():
     assert query_planner.is_complex("312 昨日付费最多的玩家的行为情况")
 
 
+def test_is_complex_multi_period_comparison():
+    # Comparing payment across two date windows needs per-period steps.
+    assert query_planner.is_complex("分析6月10-12日和7月10-12日的付费对比。找出衰减的原因")
+
+
+def test_is_complex_simple_single_date():
+    # Single-period pay query should stay simple.
+    assert not query_planner.is_complex("312 昨日付费金额是多少")
+
 def test_is_complex_simple_dau():
     assert not query_planner.is_complex("312 昨日DAU是多少")
 
