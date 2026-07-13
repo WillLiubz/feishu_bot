@@ -9,6 +9,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 
 import config
 import dataapi
+import db_rewrite
 import dquery
 import sqlguard
 import store
@@ -27,6 +28,22 @@ def _load_counter(result_dir: Path) -> int:
             if m:
                 max_n = max(max_n, int(m.group(1)))
     return max_n
+
+
+def _prepare_sql(sql: str) -> tuple[str, bool]:
+    """
+    Prepare SQL for execution:
+    1. Extract an optional leading `-- use_odl` hint.
+    2. Run sqlguard validation on the cleaned SQL.
+    3. Rewrite gamelog_odl / gameeco_odl to _raw unless the hint is present.
+
+    Returns (final_sql, use_odl).
+    """
+    cleaned, use_odl = db_rewrite.extract_odl_hint(sql)
+    sanitized = sqlguard.sanitize(cleaned)
+    if not use_odl:
+        sanitized = db_rewrite.rewrite_odl_to_raw(sanitized)
+    return sanitized, use_odl
 
 
 def main():
@@ -65,7 +82,7 @@ def main():
         """
         t0 = time.time()
         try:
-            clean_sql = sqlguard.sanitize(sql)
+            clean_sql, use_odl = _prepare_sql(sql)
             rows = dataapi.run_sql_rows(clean_sql)
             # Save last result as result.csv (for backward compat)
             csv_path = result_dir / "result.csv"

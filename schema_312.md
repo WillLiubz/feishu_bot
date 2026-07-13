@@ -11,13 +11,16 @@
 
 | 体系 | Go 包 | Presto 数据库 | 延迟 | 说明 |
 |---|---|---|---|---|
-| KPI（实时） | `plugin_uzdatacenter` / `plugin_uzdatacenter2017/kpi` | `gamelog_raw` | 实时 T+0 | 登录/充值/升级等关键事件 |
-| KPI（T+1） | 同上，入仓延迟 | `gamelog_odl` | T+1 | 同 gamelog_raw 的昨日版本 |
+| KPI（默认 RAW） | `plugin_uzdatacenter` / `plugin_uzdatacenter2017/kpi` | `gamelog_raw` | 实时 T+0 | 登录/充值/升级等关键事件；**默认所有查询使用此库** |
+| KPI（T+1，仅显式请求） | 同上，入仓延迟 | `gamelog_odl` | T+1 | 同 gamelog_raw 的归档版本；**仅当用户要求 `-- use_odl` 时使用** |
 | ECO 快照 | `plugin_uzdatacenter2017/eco` | `gameeco_raw` | 实时 / T+0 | 角色/道具/维度快照 |
-| ECO 流水 | `plugin_uzdatacenter2017/eco` | `gameeco_odl` | T+1 | 道具/资源/行为等产销流水 |
+| ECO 流水（默认 RAW） | `plugin_uzdatacenter2017/eco` | `gameeco_raw` | 实时 T+0 | 道具/资源/行为等产销流水；**默认所有查询使用此库** |
+| ECO 流水（T+1，仅显式请求） | `plugin_uzdatacenter2017/eco` | `gameeco_odl` | T+1 | 同 gameeco_raw 的归档版本；**仅当用户要求 `-- use_odl` 时使用** |
+
+**默认选库规则**：所有 KPI / ECO 查询**默认使用 RAW 库**（`gamelog_raw` / `gameeco_raw`），不按日期自动切换。只有当用户明确要求 T+1 / ODL 时，才在 SQL 开头单独一行加 `-- use_odl` 使用 ODL 库（`gamelog_odl` / `gameeco_odl`）。
 
 **表名规则**：`{库}.v_presto_{snap|log}_{小写表名}`
-例：`gameeco_raw.v_presto_snap_rolecache`、`gamelog_odl.v_presto_log_rolelogin`
+例：`gameeco_raw.v_presto_snap_rolecache`、`gamelog_raw.v_presto_log_rolelogin`
 
 **重要**：`game_id` 在 ECO 表里为 **字符串** `'312'`，在 KPI 表里为 **整数** `312`，写 SQL 需注意。
 
@@ -167,6 +170,8 @@
 
 ## 二、KPI T+1 表（gamelog_odl）
 
+> 仅当用户明确要求 T+1 / ODL，并在 SQL 开头加 `-- use_odl` 时使用。默认查询使用 `gamelog_raw`。
+
 与 gamelog_raw 对应，字段完全相同，数据延迟一天，适合查历史报表。
 
 - `gamelog_odl.v_presto_log_rolelogin`
@@ -272,7 +277,7 @@
 ```sql
 WITH dau AS (
   SELECT COUNT(DISTINCT role_id) AS total
-  FROM gamelog_odl.v_presto_log_rolelogin
+  FROM gamelog_raw.v_presto_log_rolelogin
   WHERE game_id = 312 AND ds = '<昨天ds>'
   AND SUBSTR(CAST(server_id AS VARCHAR), 5, 1) != '4'
 ),
@@ -295,7 +300,7 @@ FROM holders, dau
 ```sql
 WITH dau AS (
   SELECT COUNT(DISTINCT role_id) AS total
-  FROM gamelog_odl.v_presto_log_rolelogin
+  FROM gamelog_raw.v_presto_log_rolelogin
   WHERE game_id = 312 AND ds = '<昨天ds>'
   AND SUBSTR(CAST(server_id AS VARCHAR), 5, 1) != '4'
 ),
@@ -542,9 +547,11 @@ LIMIT 20
 
 ---
 
-## 四、ECO 流水表（gameeco_odl，T+1）
+## 四、ECO 流水表（gameeco_raw，默认）
 
-### gameeco_odl.v_presto_log_rolebehavior — 玩法行为日志 ★
+> 默认所有 ECO 流水查询使用 `gameeco_raw`。仅当用户明确要求 T+1 / ODL，并在 SQL 开头加 `-- use_odl` 时使用 `gameeco_odl`。
+
+### gameeco_raw.v_presto_log_rolebehavior — 玩法行为日志 ★
 
 记录玩家各类玩法参与（战斗/副本/PVP/活动等），是分析留存、活跃度的核心表。每次玩家触发功能模块行为产生一条，`game_id = '312'`（字符串）。
 
@@ -868,7 +875,7 @@ LIMIT 20
 
 ---
 
-### gameeco_odl.v_presto_log_roleitem — 道具产销流水
+### gameeco_raw.v_presto_log_roleitem — 道具产销流水
 
 每次道具增减一条记录。
 
@@ -892,7 +899,7 @@ LIMIT 20
 
 ---
 
-### gameeco_odl.v_presto_log_roleres — 资源产销流水
+### gameeco_raw.v_presto_log_roleres — 资源产销流水
 
 每次资源（钻石/金币/其他货币）增减一条。
 
@@ -916,7 +923,7 @@ LIMIT 20
 
 ---
 
-### gameeco_odl.v_presto_log_rolevip — VIP 升级日志
+### gameeco_raw.v_presto_log_rolevip — VIP 升级日志
 
 每次 VIP 等级变化一条。
 
@@ -933,7 +940,7 @@ LIMIT 20
 
 ---
 
-### gameeco_odl.v_presto_log_roletask — 任务完成日志
+### gameeco_raw.v_presto_log_roletask — 任务完成日志
 
 | 额外字段 | 类型 | 说明 |
 |---|---|---|
@@ -945,7 +952,7 @@ LIMIT 20
 
 ---
 
-### gameeco_odl.v_presto_log_roleshop — 商店购买日志
+### gameeco_raw.v_presto_log_roleshop — 商店购买日志
 
 | 额外字段 | 类型 | 说明 |
 |---|---|---|
@@ -961,7 +968,7 @@ LIMIT 20
 
 ---
 
-### gameeco_odl.v_presto_log_rolepromo — 活动参与日志
+### gameeco_raw.v_presto_log_rolepromo — 活动参与日志
 
 | 额外字段 | 类型 | 说明 |
 |---|---|---|
@@ -980,7 +987,7 @@ LIMIT 20
 
 ---
 
-### gameeco_odl.v_presto_log_rolegold — 黄金/钻石消耗分摊日志
+### gameeco_raw.v_presto_log_rolegold — 黄金/钻石消耗分摊日志
 
 | 额外字段 | 类型 | 说明 |
 |---|---|---|
@@ -998,7 +1005,7 @@ LIMIT 20
 
 ---
 
-### gameeco_odl.v_presto_log_unionaction — 公会行为日志
+### gameeco_raw.v_presto_log_unionaction — 公会行为日志
 
 | 额外字段 | 类型 | 说明 |
 |---|---|---|
@@ -1011,7 +1018,7 @@ LIMIT 20
 
 ---
 
-### gameeco_odl.v_presto_log_unionres — 公会资源流水
+### gameeco_raw.v_presto_log_unionres — 公会资源流水
 
 | 额外字段 | 类型 | 说明 |
 |---|---|---|
@@ -1049,7 +1056,7 @@ LIMIT 20
 ### 查昨日 DAU（登录人数）
 ```sql
 SELECT COUNT(DISTINCT role_id) AS dau
-FROM gamelog_odl.v_presto_log_rolelogin
+FROM gamelog_raw.v_presto_log_rolelogin
 WHERE game_id = 312
 AND ds = '<昨天ds>'
 AND SUBSTR(CAST(server_id AS VARCHAR), 5, 1) != '4'
@@ -1072,7 +1079,7 @@ SELECT
   ds,
   COUNT(DISTINCT role_id) AS payers,
   CAST(SUM(CAST(pay_money AS DOUBLE)) AS DECIMAL(18,2)) AS revenue
-FROM gamelog_odl.v_presto_log_payrecharge
+FROM gamelog_raw.v_presto_log_payrecharge
 WHERE game_id = 312
 AND ds >= '<7天前ds>'
 AND SUBSTR(CAST(server_id AS VARCHAR), 5, 1) != '4'
@@ -1098,7 +1105,7 @@ LIMIT 20
 ### 查昨日新增角色（注册日=昨天）
 ```sql
 SELECT COUNT(DISTINCT role_id) AS new_roles
-FROM gamelog_odl.v_presto_log_rolereg
+FROM gamelog_raw.v_presto_log_rolereg
 WHERE game_id = 312
 AND ds = '<昨天ds>'
 AND SUBSTR(CAST(server_id AS VARCHAR), 5, 1) != '4'
@@ -1107,7 +1114,7 @@ AND SUBSTR(CAST(server_id AS VARCHAR), 5, 1) != '4'
 ### 查各渠道昨日 DAU
 ```sql
 SELECT opgame_id, COUNT(DISTINCT role_id) AS dau
-FROM gamelog_odl.v_presto_log_rolelogin
+FROM gamelog_raw.v_presto_log_rolelogin
 WHERE game_id = 312
 AND ds = '<昨天ds>'
 AND SUBSTR(CAST(server_id AS VARCHAR), 5, 1) != '4'
@@ -1118,7 +1125,7 @@ ORDER BY dau DESC
 ### 查昨日各玩法参与人数（行为日志）
 ```sql
 SELECT b_type, b_id, COUNT(DISTINCT role_id) AS players, COUNT(*) AS events
-FROM gameeco_odl.v_presto_log_rolebehavior
+FROM gameeco_raw.v_presto_log_rolebehavior
 WHERE game_id = '312'
 AND ds = '<昨天ds>'
 AND SUBSTR(CAST(server_id AS VARCHAR), 5, 1) != '4'
@@ -1132,7 +1139,7 @@ LIMIT 30
 SELECT
   COUNT(DISTINCT role_id) AS players,
   COUNT(*) AS battles
-FROM gameeco_odl.v_presto_log_rolebehavior
+FROM gameeco_raw.v_presto_log_rolebehavior
 WHERE game_id = '312'
 AND ds = '<昨天ds>'
 AND b_type = 'Arena'
@@ -1143,7 +1150,7 @@ AND SUBSTR(CAST(server_id AS VARCHAR), 5, 1) != '4'
 ### 查昨日公会行为分布
 ```sql
 SELECT b_value, COUNT(DISTINCT role_id) AS players, COUNT(*) AS events
-FROM gameeco_odl.v_presto_log_rolebehavior
+FROM gameeco_raw.v_presto_log_rolebehavior
 WHERE game_id = '312'
 AND ds = '<昨天ds>'
 AND b_type = 'guild'
@@ -1155,7 +1162,7 @@ ORDER BY events DESC
 ### 查昨日社团操作明细
 ```sql
 SELECT b_value, COUNT(DISTINCT role_id) AS players, COUNT(*) AS events
-FROM gameeco_odl.v_presto_log_rolebehavior
+FROM gameeco_raw.v_presto_log_rolebehavior
 WHERE game_id = '312'
 AND ds = '<昨天ds>'
 AND b_type = 'club'
@@ -1167,7 +1174,7 @@ ORDER BY events DESC
 ### 查昨日副本（pve/PveTeam）参与情况
 ```sql
 SELECT b_type, zone_id, COUNT(DISTINCT role_id) AS players, COUNT(*) AS events
-FROM gameeco_odl.v_presto_log_rolebehavior
+FROM gameeco_raw.v_presto_log_rolebehavior
 WHERE game_id = '312'
 AND ds = '<昨天ds>'
 AND b_type IN ('pve', 'PveTeam')
@@ -1180,7 +1187,7 @@ LIMIT 30
 ### 查某玩家近7天行为轨迹
 ```sql
 SELECT ds, b_type, b_value, b_id, zone_id, rank_before, rank_after, team_power, createtime_local
-FROM gameeco_odl.v_presto_log_rolebehavior
+FROM gameeco_raw.v_presto_log_rolebehavior
 WHERE game_id = '312'
 AND ds >= '<7天前ds>'
 AND CAST(role_id AS VARCHAR) = '<角色ID>'
@@ -1191,7 +1198,7 @@ LIMIT 200
 ### 查昨日资源消耗来源
 ```sql
 SELECT res_name, change_reason, SUM(change_amount) AS total
-FROM gameeco_odl.v_presto_log_roleres
+FROM gameeco_raw.v_presto_log_roleres
 WHERE game_id = '312'
 AND ds = '<昨天ds>'
 AND change_type = 2
@@ -1203,7 +1210,7 @@ LIMIT 30
 ### 查昨日道具产出 TOP（按道具名）
 ```sql
 SELECT item_name, COUNT(*) AS times, SUM(status_after - status_before) AS total_gain
-FROM gameeco_odl.v_presto_log_roleitem
+FROM gameeco_raw.v_presto_log_roleitem
 WHERE game_id = '312'
 AND ds = '<昨天ds>'
 AND change_type = 1
@@ -1225,7 +1232,7 @@ LIMIT 20
 | 付费人数 | gamelog_raw.v_presto_log_payrecharge | COUNT(DISTINCT role_id)，ds=今天 |
 | 收入（元） | gamelog_raw.v_presto_log_payrecharge | SUM(CAST(pay_money AS DOUBLE))，ds=今天 |
 
-> 实时表（gamelog_raw）查今天数据；T+1 表（gamelog_odl）查昨天及历史。
+> 默认所有查询使用 `gamelog_raw`，不按日期切换。只有用户明确要求 T+1 / ODL 时，才在 SQL 开头加 `-- use_odl` 使用 `gamelog_odl`。
 
 ### LTV 报表
 
@@ -1235,7 +1242,7 @@ LIMIT 20
 - LTV3 = 注册后前 3 天（day 0~2）累计充值 ÷ 当天新增人数
 - LTV7 / LTV15 / LTV30 同理
 
-充值数据来自 `gamelog_odl.v_presto_log_payrecharge`（game_id=312），通过 role_id 关联注册日分群。
+充值数据来自 `gamelog_raw.v_presto_log_payrecharge`（game_id=312），通过 role_id 关联注册日分群。
 # 玩家分群行为分析模板
 
 模板文件：`app/templates/player_segment.json`

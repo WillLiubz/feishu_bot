@@ -32,9 +32,11 @@ def test_multiple_odl_occurrences():
     assert db_rewrite.rewrite_odl_to_raw(sql) == expected
 
 
-def test_gameeco_odl_not_rewritten():
+def test_gameeco_odl_rewritten():
     sql = "SELECT * FROM gameeco_odl.v_presto_log_rolebehavior WHERE game_id = '312'"
-    assert db_rewrite.rewrite_odl_to_raw(sql) == sql
+    assert db_rewrite.rewrite_odl_to_raw(sql) == (
+        "SELECT * FROM gameeco_raw.v_presto_log_rolebehavior WHERE game_id = '312'"
+    )
 
 
 def test_literal_not_rewritten():

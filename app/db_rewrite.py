@@ -1,7 +1,7 @@
 import re
 
 _ODL_HINT_RE = re.compile(r"^\s*--\s*use_odl\b", re.IGNORECASE)
-_ODL_DB_RE = re.compile(r"\bgamelog_odl\b", re.IGNORECASE)
+_ODL_DB_RE = re.compile(r"\b(gamelog|gameeco)_odl\b", re.IGNORECASE)
 
 
 def _split_by_literals(sql: str):
@@ -54,9 +54,10 @@ def extract_odl_hint(sql: str) -> tuple[str, bool]:
 
 def rewrite_odl_to_raw(sql: str) -> str:
     """
-    Replace gamelog_odl with gamelog_raw, leaving string literals untouched.
+    Replace gamelog_odl / gameeco_odl with gamelog_raw / gameeco_raw,
+    leaving string literals untouched.
 
-    Only the `gamelog_odl` database token is rewritten; `gameeco_odl` and
+    Only the `gamelog_odl` and `gameeco_odl` database tokens are rewritten;
     other databases are left unchanged.
     """
     parts = []
@@ -64,5 +65,5 @@ def rewrite_odl_to_raw(sql: str) -> str:
         if is_literal:
             parts.append(seg)
         else:
-            parts.append(_ODL_DB_RE.sub("gamelog_raw", seg))
+            parts.append(_ODL_DB_RE.sub(r"\1_raw", seg))
     return "".join(parts)

@@ -114,12 +114,12 @@ SELECT ... FROM raw_scribe_log.<behavior> WHERE gameid = '39' AND ds = '<日期>
 |---|---|
 | `custom_pra1` | 充值类型：`1`=兑换游戏币，`2`=直购道具 |
 | `custom_pra2` | 充值渠道（当前固定为空） |
-| `custom_pra3` | 充值游戏币/钻石数量 |
+| `custom_pra3` | 充值游戏币/钻石数量（**100 钻石 = 1 美元**） |
 | `custom_pra4` | 充值对账流水号/订单号 |
 | `custom_pra5` | 直购礼包 id（仅直购时） |
 | `custom_pra6` ~ `custom_pra8` | 扩展字段 |
 
-> 充值同时还会写入 MySQL `log_charge` 和 `log_direct_mall`。
+> 充值同时还会写入 MySQL `log_charge` 和 `log_direct_mall`。回答付费相关问题时，**默认以美元为最终单位**，钻石数作为辅助信息；换算：`美元金额 = CAST(custom_pra3 AS DOUBLE) / 100`。汇总口径：`COUNT(DISTINCT iuid)` 为付费人数，`SUM(CAST(custom_pra3 AS BIGINT))` 为总钻石，`ROUND(SUM(CAST(custom_pra3 AS DOUBLE)) / 100, 2)` 为总美元，`ROUND(SUM(CAST(custom_pra3 AS DOUBLE)) / 100 / COUNT(DISTINCT iuid), 2)` 为 ARPPU 美元。
 
 ---
 
@@ -284,7 +284,7 @@ SELECT ... FROM raw_scribe_log.<behavior> WHERE gameid = '39' AND ds = '<日期>
 | `ouid` | string | 平台账号 |
 | `custom_pra1` | string | 充值类型：`1`=兑换游戏币，`2`=直购道具 |
 | `custom_pra2` | string | 充值渠道（空） |
-| `custom_pra3` | string | 充值游戏币/钻石数量 |
+| `custom_pra3` | string | 充值游戏币/钻石数量（**100 钻石 = 1 美元**） |
 | `custom_pra4` | string | 订单号 |
 | `custom_pra5` | string | 直购礼包 id（仅直购） |
 | `user_level` | string | 等级 |
@@ -359,7 +359,9 @@ LIMIT 100;
 ### 2) 查询某日充值流水
 
 ```sql
-SELECT iuid, ouid, custom_pra1 AS charge_type, custom_pra3 AS amount,
+SELECT iuid, ouid, custom_pra1 AS charge_type,
+       CAST(custom_pra3 AS BIGINT) AS pay_diamonds,
+       ROUND(CAST(custom_pra3 AS DOUBLE) / 100, 2) AS pay_usd,
        custom_pra4 AS order_id, custom_pra5 AS gift_id,
        user_level, vip_level
 FROM raw_scribe_log.pay
@@ -375,13 +377,14 @@ LIMIT 100;
 
 ```sql
 SELECT iuid,
-       SUM(CAST(custom_pra3 AS BIGINT)) AS total_pay,
+       SUM(CAST(custom_pra3 AS BIGINT)) AS total_pay_diamonds,
+       ROUND(SUM(CAST(custom_pra3 AS DOUBLE)) / 100, 2) AS total_pay_usd,
        COUNT(*) AS pay_times
 FROM raw_scribe_log.pay
 WHERE gameid = '39'
   AND ds = '<昨天ds>'
 GROUP BY iuid
-ORDER BY total_pay DESC
+ORDER BY total_pay_diamonds DESC
 LIMIT 10;
 ```
 
@@ -445,7 +448,7 @@ WHERE gameid = '39'
 6. **时间字段**：`timestamp` 是 Unix 秒 BIGINT；按天过滤用 `ds`（yyyyMMdd）。
 7. **测试服过滤**：代码层没有统一测试服丢弃逻辑；`is_test` 字段含义待确认。建议按 `operatorid`/`platform` 或 `serverid` 与运营侧确认测试服范围。
 8. **MySQL 日志未接入 raw_scribe_log**：`log_exchange_pack`、`log_activity_num`、`t_log_item` 等当前不在 `raw_scribe_log` 中，查询道具/活动明细时需先确认数仓是否有对应同步表。
-9. **充值金额口径**：`raw_scribe_log.pay.custom_pra3` 是充值获得的游戏币/钻石数量，不是人民币金额；如需人民币金额，需结合 `log_charge` 或平台对账数据。
+9. **充值金额口径**：`raw_scribe_log.pay.custom_pra3` 是充值获得的游戏币/钻石数量，**100 钻石 = 1 美元**；汇总/展示付费时请同时给出钻石数和折算美元金额。
 
 ---
 
@@ -474,7 +477,7 @@ WHERE gameid = '39'
 ### 输出 Sheet
 
 1. **概览**：三群人数、充值钻石数、人均充值钻石、付费用户人均充值钻石。
-2. **付费玩家付费点**：按 `custom_pra1`（充值类型）+ `custom_pra5`（直购礼包 ID）汇总充值钻石数、次数。
+2. **付费玩家付费点**：按 `custom_pra1`（充值类型）+ `custom_pra5`（直购礼包 ID）汇总充值钻石数、折算美元金额、次数。
 3. **付费玩家玩法参与**：基于 `raw_scribe_log.prop` 的 `custom_pra1` 消费系统，对比付费玩家与全量活跃玩家的消费参与率。
 4. **沉默玩家现状**：沉默玩家在分析窗口内的消费系统分布、沉默窗充值钻石数。
 5. **免费玩家行为**：免费玩家的消费系统分布、平均活跃天数、等级/VIP 分布。
@@ -483,7 +486,7 @@ WHERE gameid = '39'
 ### 主要表
 
 - `raw_scribe_log.login` — 活跃玩家（`iuid`）
-- `raw_scribe_log.pay` — 充值流水（`custom_pra3` 为钻石数量）
+- `raw_scribe_log.pay` — 充值流水（`custom_pra3` 为钻石数量，100 钻石 = 1 美元）
 - `raw_scribe_log.prop` — 玩家消费/参与系统（`custom_pra1` 为系统方法）
 
 ### 示例

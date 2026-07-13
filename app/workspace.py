@@ -14,8 +14,8 @@ _WORKSPACES_DIR = _ROOT / "data" / "workspaces"
 _RULES_TEMPLATE = """\
 你是一个数据分析助手，帮助用户查询数仓数据。
 
-今天日期（实时表 ds 分区）：{today}
-昨天日期（T+1 延时表 ds 分区）：{yesterday}
+今天日期（ds 分区）：{today}
+昨天日期（ds 分区）：{yesterday}
 本月起始日期：{month_start}
 
 规则：
@@ -45,14 +45,15 @@ _RULES_TEMPLATE = """\
 """
 
 _DEFAULT_GAME_RULES = """\
-15. ECO 日志表（roleitem / roleres / rolebehavior）位于 gameeco_raw，不是 gameeco_odl：
+15. **默认所有 KPI/日志/ECO 查询使用 RAW 实时库（gamelog_raw / gameeco_raw），不按日期自动切换。** 只有用户明确要求 T+1 / odl 时，才在 SQL 开头单独一行加 `-- use_odl` 使用 ODL 库（gamelog_odl / gameeco_odl）。没有 `-- use_odl` 时，系统会自动把 ODL 表名改写成 RAW。
+16. ECO 日志表（roleitem / roleres / rolebehavior）位于 gameeco_raw，不是 gameeco_odl：
     - roleitem: gameeco_raw.v_presto_log_roleitem
     - roleres: gameeco_raw.v_presto_log_roleres
     - rolebehavior: gameeco_raw.v_presto_log_rolebehavior
     - 这些表的 role_id 是 BIGINT，与 VARCHAR 字段比较时必须 CAST(role_id AS VARCHAR)
     - game_id 在 ECO 表中是字符串（如 '312'），比较时直接写 game_id = '312'
-16. 付费表 gamelog_raw.v_presto_log_payrecharge 的 role_id 通常也是 BIGINT，用 CAST(role_id AS VARCHAR) IN (...) 过滤
-17. 月度排行榜玩家充值类问题必须拆成两步：
+17. 付费表 gamelog_raw.v_presto_log_payrecharge 的 role_id 通常也是 BIGINT，用 CAST(role_id AS VARCHAR) IN (...) 过滤
+18. 月度排行榜玩家充值类问题必须拆成两步：
     - 第1步：从 gameeco_raw.v_presto_log_rolebehavior 查 b_type='MonthRank'，获取 role_id 列表
     - 第2步：用 CAST(role_id AS VARCHAR) IN (...) 去 gamelog_raw.v_presto_log_payrecharge 查充值
 """
@@ -70,7 +71,7 @@ _GAME_SPECIFIC_RULES = {
     字段含义参考 schema_39.md。
 16. **过滤游戏必须用字符串 `gameid = '39'`，绝对不要写 `game_id = 39`**；`game_id` 列虽然存在但会让 Presto 全表扫描，导致超时。
 17. 玩家唯一标识用 `iuid`（内部 uid），平台账号用 `ouid`。按玩家关联时用 `iuid`。
-18. 付费金额在 `raw_scribe_log.pay.custom_pra3`（字符串，需 CAST），付费类型在 `custom_pra1`（`1`=兑换游戏币，`2`=直购道具）。
+18. `raw_scribe_log.pay.custom_pra3` 是**充值获得的游戏币/钻石数量**（字符串，需 CAST）。回答任何游戏 39 的付费/充值问题时，**默认以美元为最终单位**，钻石数仅作为辅助参考；换算公式：`美元金额 = ROUND(CAST(custom_pra3 AS DOUBLE) / 100, 2)`（即 100 钻石 = 1 美元）。付费类型在 `custom_pra1`（`1`=兑换游戏币，`2`=直购道具）。
 19. 系统参与/消费行为查 `raw_scribe_log.prop` 的 `custom_pra1`（来源 class.method，如 `UserLevy.levy`）和 `custom_pra3`（数量）。
 20. 不要使用 `gameeco_raw`、`gamelog_raw.v_presto_log_*` 等 312/160 项目的表名来查询游戏 39。
 21. `raw_scribe_log.*` 的数值列都是 VARCHAR，求和/排序时必须 `CAST(custom_pra3 AS BIGINT)` 或 `CAST(custom_pra3 AS DOUBLE)`。
