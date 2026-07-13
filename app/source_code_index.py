@@ -1,5 +1,17 @@
-import re
 from pathlib import Path
+
+
+# Directories to skip while scanning source trees.
+_SKIP_DIRS = {".git", ".svn", "node_modules", "vendor", "bin", "obj", "dist", "build"}
+
+# Only scan files with source-like extensions.
+_SOURCE_EXTENSIONS = {
+    ".go", ".php", ".java", ".py", ".js", ".ts", ".cs", ".cpp", ".c", ".h",
+    ".rb", ".rs", ".swift", ".kt", ".scala", ".m", ".mm", ".sh", ".bash",
+}
+
+# Skip files larger than this many bytes to avoid I/O spikes.
+_MAX_FILE_BYTES = 5 * 1024 * 1024
 
 
 # Map from source code function / category suffix to recommended warehouse table.
@@ -30,6 +42,12 @@ def _find_matches(source_dir: Path) -> dict:
         return matches
     for path in source_dir.rglob("*"):
         if not path.is_file():
+            continue
+        if path.suffix.lower() not in _SOURCE_EXTENSIONS:
+            continue
+        if path.stat().st_size > _MAX_FILE_BYTES:
+            continue
+        if any(part in _SKIP_DIRS for part in path.relative_to(source_dir).parts):
             continue
         try:
             text = path.read_text(encoding="utf-8", errors="ignore")

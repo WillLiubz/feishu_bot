@@ -84,16 +84,40 @@ _SUMMARY_SYSTEM_PROMPT_TEMPLATE = """\
 
 
 def _extract_json(text: str) -> dict:
-    """Extract JSON object from text that may contain markdown fences."""
+    """Extract the first JSON object from text, handling nested braces."""
     # Try fenced code block
     m = re.search(r'```(?:json)?\s*\n(.*?)\n```', text, re.DOTALL)
     if m:
         return json.loads(m.group(1))
-    # Try bare JSON object
-    m = re.search(r'\{.*\}', text, re.DOTALL)
-    if m:
-        return json.loads(m.group(0))
-    raise ValueError("No JSON object found in planner output")
+
+    # Find the first balanced { ... } object to avoid stopping at nested braces
+    start = text.find('{')
+    if start == -1:
+        raise ValueError("No JSON object found in planner output")
+
+    depth = 0
+    in_string = False
+    escape = False
+    for i, ch in enumerate(text[start:], start):
+        if escape:
+            escape = False
+            continue
+        if ch == '\\':
+            escape = True
+            continue
+        if ch == '"' and not escape:
+            in_string = not in_string
+            continue
+        if in_string:
+            continue
+        if ch == '{':
+            depth += 1
+        elif ch == '}':
+            depth -= 1
+            if depth == 0:
+                return json.loads(text[start:i + 1])
+
+    raise ValueError("No complete JSON object found in planner output")
 
 
 def is_complex(text: str) -> bool:
@@ -152,13 +176,6 @@ def is_complex(text: str) -> bool:
 
     # Need at least a concrete entity + multiple dimensions
     return (score >= 3 and has_dimension) or cross_dimension or multi_period
-
-
-def decide_steps(question: str, ws: dict, claude_md_text: str) -> tuple[bool, List[PlanStep]]:
-    """Decide whether a question needs planned execution and return planned steps."""
-    import query_analyzer
-    result = query_analyzer.analyze(question, ws, claude_md_text)
-    return result.mode == "planned", list(result.steps)
 
 
 def plan(question: str, ws: dict) -> Plan:

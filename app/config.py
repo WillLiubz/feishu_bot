@@ -102,6 +102,9 @@ def game_config(game_id=None) -> GameConfig:
     )
 
 
+# Source code directories for optional schema augmentation.
+GAME_SOURCE_DIRS = _get("game_source_dirs", {})
+
 # Channels
 LOCK_OPGAME_IDS = _get("channels.lock_opgame_ids", [])
 CHANNEL_ALIASES = _get("channels.aliases", {})

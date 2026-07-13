@@ -17,7 +17,10 @@ import workspace
 
 
 def main():
-    game_config = config.game_config(312)
+    try:
+        game_config = config.game_config(312)
+    except ValueError:
+        game_config = config.game_config()
     chat_id = "debug_analyzer"
     message_id = "debug_msg"
     ws = workspace.prepare(chat_id, message_id, game_config=game_config, opgames=[])

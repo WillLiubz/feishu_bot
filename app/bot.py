@@ -183,13 +183,12 @@ def _send_results(client, chat_id, ws):
         _send_file(client, chat_id, ws["result_dir"] + "/result.csv")
 
 
-def _handle_simple(client, chat_id, user_id, message_id, text, opgames, game_config):
+def _handle_simple(client, chat_id, user_id, message_id, text, opgames, game_config, ws):
     """Process a simple query through a single Claude CLI call."""
     t0 = time.time()
     new_sid = None
     try:
         sid = store.get_session(chat_id, game_config.game_id)
-        ws = workspace.prepare(chat_id, message_id, game_config=game_config, opgames=opgames)
         _send_text(client, chat_id, "🔎 正在查询数仓，请稍候…")
         answer, new_sid = claude_cli.run(text, ws, sid)
         store.set_session(chat_id, new_sid, game_config.game_id)
@@ -277,9 +276,8 @@ def _planned_handler(client, chat_id, user_id, message_id, text, opgames, game_c
             _active_chats.discard(chat_id)
 
 
-def _handle_planned(client, chat_id, user_id, message_id, text, opgames, game_config):
+def _handle_planned(client, chat_id, user_id, message_id, text, opgames, game_config, ws):
     """Process a complex query by splitting it into multiple planned steps."""
-    ws = workspace.prepare(chat_id, message_id, game_config=game_config, opgames=opgames)
     _planned_handler(client, chat_id, user_id, message_id, text, opgames, game_config, ws, steps=None)
 
 
@@ -292,13 +290,13 @@ def _handle(client, chat_id, user_id, message_id, text, opgames, game_config):
     """Route a query to simple or planned handler based on LLM analysis."""
     ws = workspace.prepare(chat_id, message_id, game_config=game_config, opgames=opgames)
     claude_md_text = workspace.get_claude_md_text(ws)
-    result = query_analyzer.analyze(text, ws, claude_md_text)
+    result = query_analyzer.analyze(text, ws, claude_md_text, game_id=game_config.game_id)
     if result.mode == "planned" and result.steps:
         _handle_planned_with_steps(client, chat_id, user_id, message_id, text, opgames, game_config, ws, result.steps)
     elif result.mode == "planned":
-        _handle_planned(client, chat_id, user_id, message_id, text, opgames, game_config)
+        _handle_planned(client, chat_id, user_id, message_id, text, opgames, game_config, ws)
     else:
-        _handle_simple(client, chat_id, user_id, message_id, text, opgames, game_config)
+        _handle_simple(client, chat_id, user_id, message_id, text, opgames, game_config, ws)
 
 
 def _handle_report(client, chat_id, message_id, report_type, text, game_config):

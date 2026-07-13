@@ -19,9 +19,9 @@ _ANALYZER_SYSTEM_PROMPT = """\
 你是一个数据仓库查询路由专家。请阅读下面的业务规则（CLAUDE.md），判断用户的问题是需要单步执行还是分步执行。
 
 业务规则：
-{claude_md}
+__CLAUDE_MD__
 
-用户问题：{question}
+用户问题：__QUESTION__
 
 输出要求：
 - 只输出 JSON，不要任何其他文字
@@ -43,14 +43,40 @@ steps 中每一步必须包含：
 
 
 def _extract_json(text: str) -> dict:
-    """Extract JSON object from text that may contain markdown fences."""
+    """Extract the first JSON object from text, handling nested braces."""
+    # Fenced code block
     m = re.search(r"```(?:json)?\s*\n(.*?)\n```", text, re.DOTALL)
     if m:
         return json.loads(m.group(1))
-    m = re.search(r"\{.*\}", text, re.DOTALL)
-    if m:
-        return json.loads(m.group(0))
-    raise ValueError("No JSON object found in analyzer output")
+
+    # Find the first balanced { ... } object to avoid stopping at nested braces
+    start = text.find("{")
+    if start == -1:
+        raise ValueError("No JSON object found in analyzer output")
+
+    depth = 0
+    in_string = False
+    escape = False
+    for i, ch in enumerate(text[start:], start):
+        if escape:
+            escape = False
+            continue
+        if ch == "\\":
+            escape = True
+            continue
+        if ch == '"' and not escape:
+            in_string = not in_string
+            continue
+        if in_string:
+            continue
+        if ch == "{":
+            depth += 1
+        elif ch == "}":
+            depth -= 1
+            if depth == 0:
+                return json.loads(text[start : i + 1])
+
+    raise ValueError("No complete JSON object found in analyzer output")
 
 
 def _fallback_heuristic(question: str) -> AnalysisResult:
@@ -75,8 +101,8 @@ def _maybe_append_source_summary(claude_md_text: str, game_id: int | None) -> st
         table_mentions = sum(1 for kw in ("gamelog_raw", "gameeco_raw", "raw_scribe_log") if kw in claude_md_text)
         if table_mentions >= 2:
             return claude_md_text
-        source_dirs = getattr(config, "GAME_SOURCE_DIRS", {})
-        source_dir = source_dirs.get(game_id)
+        source_dirs = config.GAME_SOURCE_DIRS
+        source_dir = source_dirs.get(str(game_id))
         if not source_dir:
             return claude_md_text
         summary = source_code_index.summarize_game_source(game_id, source_dir)
@@ -94,10 +120,9 @@ def analyze(question: str, ws: dict, claude_md_text: str, game_id: int | None = 
     the active CLAUDE.md business rules.
     """
     augmented_md = _maybe_append_source_summary(claude_md_text, game_id)
-    system_prompt = _ANALYZER_SYSTEM_PROMPT.format(
-        claude_md=augmented_md,
-        question=question,
-    )
+    system_prompt = _ANALYZER_SYSTEM_PROMPT.replace(
+        "__CLAUDE_MD__", augmented_md
+    ).replace("__QUESTION__", question)
     try:
         answer, _ = claude_cli.run_with_system_prompt(question, ws, system_prompt)
         data = _extract_json(answer)
@@ -108,7 +133,9 @@ def analyze(question: str, ws: dict, claude_md_text: str, game_id: int | None = 
     if mode not in ("simple", "planned"):
         mode = "simple"
 
-    raw_steps = data.get("steps", []) if mode == "planned" else []
+    raw_steps = (data.get("steps") or []) if mode == "planned" else []
+    if not isinstance(raw_steps, list):
+        raw_steps = []
     steps = [
         query_planner.PlanStep(goal=s.get("goal", ""), sql_hint=s.get("sql_hint", ""))
         for s in raw_steps[:5]
