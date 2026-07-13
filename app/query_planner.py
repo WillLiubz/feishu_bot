@@ -103,6 +103,7 @@ def is_complex(text: str) -> bool:
         "role_id",
         "道具",
         "玩法",
+        "行为",
         "获得",
         "参与",
         "资源",
@@ -115,8 +116,18 @@ def is_complex(text: str) -> bool:
         "?",
     ]
     score = sum(1 for ind in indicators if ind in lowered)
+    has_dimension = (
+        "道具" in lowered
+        or "玩法" in lowered
+        or "行为" in lowered
+        or "资源" in lowered
+    )
+    # Payment + behavior/item/resource queries usually cross multiple large tables
+    # and need to be split (e.g. find top payer first, then query their behavior).
+    has_payment = "付费" in lowered or "充值" in lowered
+    cross_dimension = has_payment and has_dimension
     # Need at least a concrete entity + multiple dimensions
-    return score >= 3 and ("道具" in lowered or "玩法" in lowered or "资源" in lowered)
+    return (score >= 3 and has_dimension) or cross_dimension
 
 
 def plan(question: str, ws: dict) -> Plan:

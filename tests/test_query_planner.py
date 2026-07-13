@@ -28,6 +28,11 @@ def test_is_complex_simple_pay_only():
     assert not query_planner.is_complex("312 查询昨日的付费TOP100情况")
 
 
+def test_is_complex_payment_plus_behavior():
+    # Finding top payer then analyzing their behavior crosses tables and needs splitting.
+    assert query_planner.is_complex("312 昨日付费最多的玩家的行为情况")
+
+
 def test_is_complex_simple_dau():
     assert not query_planner.is_complex("312 昨日DAU是多少")
 
