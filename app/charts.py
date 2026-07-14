@@ -191,3 +191,41 @@ def render_pngs_for_dir(result_dir):
         if render_png(rows, ctype, _title_for(result_dir, idx), out):
             paths.append(str(out))
     return paths
+
+
+def add_native_chart(ws, rows, chart_type, anchor):
+    """Embed a native openpyxl chart into worksheet at anchor (e.g. 'J2').
+
+    Data must already be written starting at A1 (header in row 1), and value
+    cells referenced by the chart must be real numbers. Chart title uses the
+    worksheet title. Returns True if a chart was embedded.
+    """
+    from openpyxl.chart import PieChart, BarChart, LineChart, Reference
+    if not rows or chart_type not in ("line", "pie", "bar"):
+        return False
+    headers = list(rows[0].keys())
+    series = series_columns(rows)
+    if not series:
+        return False
+    n_rows = len(rows) + 1
+    cats = Reference(ws, min_col=1, min_row=2, max_row=n_rows)
+    if chart_type == "pie":
+        chart = PieChart()
+        chosen = series[:1]
+    elif chart_type == "line":
+        chart = LineChart()
+        chosen = series[:MAX_SERIES]
+    else:
+        chart = BarChart()
+        chart.type = "col"
+        chosen = series[:MAX_SERIES]
+    for h in chosen:
+        col = headers.index(h) + 1
+        vals = Reference(ws, min_col=col, min_row=1, max_row=n_rows)
+        chart.add_data(vals, titles_from_data=True)
+    chart.set_categories(cats)
+    chart.title = ws.title
+    chart.width = 14
+    chart.height = 8
+    ws.add_chart(chart, anchor)
+    return True

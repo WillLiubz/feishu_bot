@@ -131,3 +131,49 @@ def test_render_pngs_for_dir_with_gap_in_numbering(tmp_path):
         assert names == ["query_1.png", "query_3.png"]
     else:
         assert paths == []
+
+
+def test_add_native_chart_pie():
+    from openpyxl import Workbook
+    wb = Workbook()
+    ws = wb.active
+    ws.append(["类别", "数值"])
+    ws.append(["甲", 10])
+    ws.append(["乙", 20])
+    rows = [{"类别": "甲", "数值": "10"}, {"类别": "乙", "数值": "20"}]
+    ok = charts.add_native_chart(ws, rows, "pie", "D2")
+    assert ok is True
+    assert len(ws._charts) == 1
+
+
+def test_add_native_chart_line_multi_series():
+    from openpyxl import Workbook
+    wb = Workbook()
+    ws = wb.active
+    ws.append(["日期", "收入", "付费人数"])
+    ws.append(["20260701", 100, 5])
+    ws.append(["20260702", 200, 8])
+    rows = [{"日期": "20260701", "收入": "100", "付费人数": "5"},
+            {"日期": "20260702", "收入": "200", "付费人数": "8"}]
+    ok = charts.add_native_chart(ws, rows, "line", "E2")
+    assert ok is True
+    assert len(ws._charts) == 1
+
+
+def test_add_native_chart_returns_false_without_series():
+    from openpyxl import Workbook
+    wb = Workbook()
+    ws = wb.active
+    ws.append(["a", "b"])
+    ws.append(["x", "y"])
+    rows = [{"a": "x", "b": "y"}]
+    assert charts.add_native_chart(ws, rows, "bar", "D2") is False
+    assert len(ws._charts) == 0
+
+
+def test_add_native_chart_returns_false_for_invalid_type():
+    from openpyxl import Workbook
+    wb = Workbook()
+    ws = wb.active
+    rows = [{"类别": "甲", "数值": "10"}]
+    assert charts.add_native_chart(ws, rows, "unknown", "D2") is False
