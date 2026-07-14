@@ -78,11 +78,6 @@ _GAME_SPECIFIC_RULES = {
 """,
 }
 
-_DENY_TOOLS = [
-    "Bash", "Edit", "Write", "Read", "WebFetch", "WebSearch",
-    "TodoWrite", "TodoRead", "computer_use", "str_replace_editor",
-]
-
 
 def _safe(s):
     return re.sub(r'[^a-zA-Z0-9_-]', '_', s)
@@ -135,13 +130,16 @@ def prepare(chat_id, message_id, game_config=None, opgames=None):
     claude_md = rules + channel_block + user_scope + "\n" + schema_text
     (ws_dir / "CLAUDE.md").write_text(claude_md, encoding="utf-8")
 
-    # .claude/settings.json: deny all built-in tools
+    # .claude/settings.json: child CLI only needs the dquery MCP tool.
+    # We do not deny built-in tools here; per-tool deny rules referencing
+    # TodoRead/TodoWrite cause "Permission deny rule ... matches no known tool"
+    # errors in newer claude CLI versions. The parent process already restricts
+    # permissions via --permission-mode bypassPermissions and --allowedTools.
     claude_dir = ws_dir / ".claude"
     claude_dir.mkdir(exist_ok=True)
     settings = {
         "permissions": {
             "allow": ["mcp__dquery__query_data"],
-            "deny": _DENY_TOOLS,
         }
     }
     (claude_dir / "settings.json").write_text(
