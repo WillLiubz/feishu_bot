@@ -75,7 +75,6 @@ def test_slice_for_png_limits():
 
 _PIE_ROWS = [{"渠道": "甲", "收入": "30"}, {"渠道": "乙", "收入": "70"}]
 _LINE_ROWS = [{"日期": f"2026070{i}", "收入": str(i * 100)} for i in range(1, 4)]
-_BAR_ROWS = [{"道具": f"item{i}", "数量": str(i * 5)} for i in range(10)]
 
 
 def test_render_png_pie(tmp_path):

@@ -111,38 +111,40 @@ def render_png(rows, chart_type, title, out_path):
     try:
         data = _slice_for_png(rows, chart_type)
         fig, ax = plt.subplots(figsize=(8, 5))
-        if chart_type == "pie":
-            labels = [str(r.get(cat_col, "")) for r in data]
-            vals = [to_float(r.get(series[0])) or 0.0 for r in data]
-            ax.pie(vals, labels=labels, autopct="%1.1f%%")
-        elif chart_type == "line":
-            xs = [str(r.get(cat_col, "")) for r in data]
-            for h in series[:MAX_SERIES]:
-                ys = [to_float(r.get(h)) or 0.0 for r in data]
-                ax.plot(xs, ys, marker="o", label=h)
-            ax.legend()
-            ax.tick_params(axis="x", rotation=45)
-        else:  # bar
-            xs = [str(r.get(cat_col, "")) for r in data]
-            chosen = series[:MAX_SERIES]
-            if len(chosen) == 1:
-                ys = [to_float(r.get(chosen[0])) or 0.0 for r in data]
-                ax.bar(xs, ys)
-            else:
-                width = 0.8 / len(chosen)
-                for i, h in enumerate(chosen):
+        try:
+            if chart_type == "pie":
+                labels = [str(r.get(cat_col, "")) for r in data]
+                vals = [to_float(r.get(series[0])) or 0.0 for r in data]
+                ax.pie(vals, labels=labels, autopct="%1.1f%%")
+            elif chart_type == "line":
+                xs = [str(r.get(cat_col, "")) for r in data]
+                for h in series[:MAX_SERIES]:
                     ys = [to_float(r.get(h)) or 0.0 for r in data]
-                    offset = [x + i * width for x in range(len(xs))]
-                    ax.bar(offset, ys, width=width, label=h)
-                center = 0.4 - width / 2
-                ax.set_xticks([x + center for x in range(len(xs))])
-                ax.set_xticklabels(xs)
+                    ax.plot(xs, ys, marker="o", label=h)
                 ax.legend()
-            ax.tick_params(axis="x", rotation=45)
-        ax.set_title(title)
-        fig.tight_layout()
-        fig.savefig(str(out_path), dpi=110, bbox_inches="tight")
-        plt.close(fig)
+                ax.tick_params(axis="x", rotation=45)
+            else:  # bar
+                xs = [str(r.get(cat_col, "")) for r in data]
+                chosen = series[:MAX_SERIES]
+                if len(chosen) == 1:
+                    ys = [to_float(r.get(chosen[0])) or 0.0 for r in data]
+                    ax.bar(xs, ys)
+                else:
+                    width = 0.8 / len(chosen)
+                    for i, h in enumerate(chosen):
+                        ys = [to_float(r.get(h)) or 0.0 for r in data]
+                        offset = [x + i * width for x in range(len(xs))]
+                        ax.bar(offset, ys, width=width, label=h)
+                    center = len(chosen) * width / 2
+                    ax.set_xticks([x + center for x in range(len(xs))])
+                    ax.set_xticklabels(xs)
+                    ax.legend()
+                ax.tick_params(axis="x", rotation=45)
+            ax.set_title(title)
+            fig.tight_layout()
+            fig.savefig(str(out_path), dpi=110, bbox_inches="tight")
+        finally:
+            plt.close(fig)
         return str(out_path)
     except Exception as e:
         print(f"[charts] render_png failed: {e}", flush=True)
@@ -172,7 +174,11 @@ def render_pngs_for_dir(result_dir):
         result_dir.glob("query_*.csv"),
         key=lambda p: int(re.search(r"query_(\d+)", p.stem).group(1)),
     )
-    for i, csv_path in enumerate(query_files, 1):
+    for csv_path in query_files:
+        try:
+            idx = int(re.search(r"query_(\d+)", csv_path.stem).group(1))
+        except (AttributeError, ValueError):
+            continue
         try:
             with open(csv_path, encoding="utf-8-sig", newline="") as f:
                 rows = list(csv.DictReader(f))
@@ -181,7 +187,7 @@ def render_pngs_for_dir(result_dir):
         ctype = detect_chart_type(rows)
         if not ctype:
             continue
-        out = result_dir / f"query_{i}.png"
-        if render_png(rows, ctype, _title_for(result_dir, i), out):
+        out = result_dir / f"query_{idx}.png"
+        if render_png(rows, ctype, _title_for(result_dir, idx), out):
             paths.append(str(out))
     return paths
