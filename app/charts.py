@@ -135,7 +135,7 @@ def render_png(rows, chart_type, title, out_path):
                         ys = [to_float(r.get(h)) or 0.0 for r in data]
                         offset = [x + i * width for x in range(len(xs))]
                         ax.bar(offset, ys, width=width, label=h)
-                    center = len(chosen) * width / 2
+                    center = (len(chosen) - 1) * width / 2
                     ax.set_xticks([x + center for x in range(len(xs))])
                     ax.set_xticklabels(xs)
                     ax.legend()

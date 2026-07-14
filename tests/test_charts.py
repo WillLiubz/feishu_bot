@@ -119,3 +119,15 @@ def test_render_pngs_for_dir(tmp_path):
         assert paths[0].endswith("query_1.png")
     else:
         assert paths == []
+
+
+def test_render_pngs_for_dir_with_gap_in_numbering(tmp_path):
+    (tmp_path / "query_1.csv").write_text("类别,数值\n甲,10\n乙,20\n", encoding="utf-8-sig")
+    (tmp_path / "query_3.csv").write_text("类别,数值\n丙,30\n丁,40\n", encoding="utf-8-sig")
+    paths = charts.render_pngs_for_dir(str(tmp_path))
+    if charts.CHARTS_AVAILABLE:
+        assert len(paths) == 2
+        names = sorted(Path(p).name for p in paths)
+        assert names == ["query_1.png", "query_3.png"]
+    else:
+        assert paths == []
