@@ -97,3 +97,91 @@ def _slice_for_png(rows, chart_type):
     if chart_type == "line":
         return rows[:MAX_LINE_POINTS_PNG]
     return rows[:MAX_BAR_ROWS_PNG]
+
+
+def render_png(rows, chart_type, title, out_path):
+    """Render rows to a PNG chart file. Returns str(out_path) or None on failure."""
+    if not CHARTS_AVAILABLE or not rows or chart_type not in ("line", "pie", "bar"):
+        return None
+    headers = list(rows[0].keys())
+    cat_col = headers[0]
+    series = series_columns(rows)
+    if not series:
+        return None
+    try:
+        data = _slice_for_png(rows, chart_type)
+        fig, ax = plt.subplots(figsize=(8, 5))
+        if chart_type == "pie":
+            labels = [str(r.get(cat_col, "")) for r in data]
+            vals = [to_float(r.get(series[0])) or 0.0 for r in data]
+            ax.pie(vals, labels=labels, autopct="%1.1f%%")
+        elif chart_type == "line":
+            xs = [str(r.get(cat_col, "")) for r in data]
+            for h in series[:MAX_SERIES]:
+                ys = [to_float(r.get(h)) or 0.0 for r in data]
+                ax.plot(xs, ys, marker="o", label=h)
+            ax.legend()
+            ax.tick_params(axis="x", rotation=45)
+        else:  # bar
+            xs = [str(r.get(cat_col, "")) for r in data]
+            chosen = series[:MAX_SERIES]
+            if len(chosen) == 1:
+                ys = [to_float(r.get(chosen[0])) or 0.0 for r in data]
+                ax.bar(xs, ys)
+            else:
+                width = 0.8 / len(chosen)
+                for i, h in enumerate(chosen):
+                    ys = [to_float(r.get(h)) or 0.0 for r in data]
+                    offset = [x + i * width for x in range(len(xs))]
+                    ax.bar(offset, ys, width=width, label=h)
+                center = 0.4 - width / 2
+                ax.set_xticks([x + center for x in range(len(xs))])
+                ax.set_xticklabels(xs)
+                ax.legend()
+            ax.tick_params(axis="x", rotation=45)
+        ax.set_title(title)
+        fig.tight_layout()
+        fig.savefig(str(out_path), dpi=110, bbox_inches="tight")
+        plt.close(fig)
+        return str(out_path)
+    except Exception as e:
+        print(f"[charts] render_png failed: {e}", flush=True)
+        return None
+
+
+def _title_for(result_dir: Path, index: int) -> str:
+    """Derive chart title like '查询1_payrecharge' from the adjacent .sql file.
+
+    Note: mirrors dquery._sheet_name logic; duplicated here to avoid a
+    circular import (dquery imports charts).
+    """
+    sql_file = result_dir / f"query_{index}.sql"
+    sql_text = sql_file.read_text(encoding="utf-8") if sql_file.exists() else ""
+    m = re.search(r"\bFROM\s+(\S+)", sql_text, re.IGNORECASE)
+    if m:
+        tbl = m.group(1).split(".")[-1].strip('`"\' ')[:20]
+        return f"查询{index}_{tbl}"
+    return f"查询{index}"
+
+
+def render_pngs_for_dir(result_dir):
+    """Generate query_N.png next to each chartable query_N.csv. Returns list of paths."""
+    result_dir = Path(result_dir)
+    paths = []
+    query_files = sorted(
+        result_dir.glob("query_*.csv"),
+        key=lambda p: int(re.search(r"query_(\d+)", p.stem).group(1)),
+    )
+    for i, csv_path in enumerate(query_files, 1):
+        try:
+            with open(csv_path, encoding="utf-8-sig", newline="") as f:
+                rows = list(csv.DictReader(f))
+        except Exception:
+            continue
+        ctype = detect_chart_type(rows)
+        if not ctype:
+            continue
+        out = result_dir / f"query_{i}.png"
+        if render_png(rows, ctype, _title_for(result_dir, i), out):
+            paths.append(str(out))
+    return paths

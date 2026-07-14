@@ -1,0 +1,5 @@
+lark-oapi
+fastmcp
+openpyxl
+matplotlib
+pytest

@@ -5,6 +5,8 @@ sys.path.insert(0, str(Path(__file__).parent.parent / "app"))
 
 import charts
 
+import pytest
+
 
 def test_detect_none_for_empty_rows():
     assert charts.detect_chart_type([]) is None
@@ -69,3 +71,52 @@ def test_slice_for_png_limits():
     assert len(charts._slice_for_png(rows, "pie")) == charts.MAX_PIE_CATEGORIES
     assert len(charts._slice_for_png(rows, "line")) == charts.MAX_LINE_POINTS_PNG
     assert len(charts._slice_for_png(rows, "bar")) == charts.MAX_BAR_ROWS_PNG
+
+
+_PIE_ROWS = [{"渠道": "甲", "收入": "30"}, {"渠道": "乙", "收入": "70"}]
+_LINE_ROWS = [{"日期": f"2026070{i}", "收入": str(i * 100)} for i in range(1, 4)]
+_BAR_ROWS = [{"道具": f"item{i}", "数量": str(i * 5)} for i in range(10)]
+
+
+def test_render_png_pie(tmp_path):
+    if not charts.CHARTS_AVAILABLE:
+        pytest.skip("matplotlib not installed")
+    out = charts.render_png(_PIE_ROWS, "pie", "充值占比", tmp_path / "pie.png")
+    assert out and Path(out).exists() and Path(out).stat().st_size > 0
+
+
+def test_render_png_line(tmp_path):
+    if not charts.CHARTS_AVAILABLE:
+        pytest.skip("matplotlib not installed")
+    out = charts.render_png(_LINE_ROWS, "line", "收入趋势", tmp_path / "line.png")
+    assert out and Path(out).exists() and Path(out).stat().st_size > 0
+
+
+def test_render_png_bar_grouped(tmp_path):
+    if not charts.CHARTS_AVAILABLE:
+        pytest.skip("matplotlib not installed")
+    rows = [{"渠道": "a", "收入": "10", "付费人数": "3"},
+            {"渠道": "b", "收入": "20", "付费人数": "5"}]
+    out = charts.render_png(rows, "bar", "分组柱状", tmp_path / "bar.png")
+    assert out and Path(out).exists() and Path(out).stat().st_size > 0
+
+
+def test_render_png_returns_none_when_unavailable(monkeypatch, tmp_path):
+    monkeypatch.setattr(charts, "CHARTS_AVAILABLE", False)
+    assert charts.render_png(_PIE_ROWS, "pie", "t", tmp_path / "x.png") is None
+
+
+def test_render_png_returns_none_for_invalid_type(tmp_path):
+    assert charts.render_png(_PIE_ROWS, "unknown", "t", tmp_path / "x.png") is None
+
+
+def test_render_pngs_for_dir(tmp_path):
+    (tmp_path / "query_1.csv").write_text("类别,数值\n甲,10\n乙,20\n", encoding="utf-8-sig")
+    (tmp_path / "query_1.sql").write_text("SELECT a FROM db.payrecharge", encoding="utf-8")
+    (tmp_path / "query_2.csv").write_text("a,b\nx,y\n", encoding="utf-8-sig")  # 无数值列
+    paths = charts.render_pngs_for_dir(str(tmp_path))
+    if charts.CHARTS_AVAILABLE:
+        assert len(paths) == 1
+        assert paths[0].endswith("query_1.png")
+    else:
+        assert paths == []
