@@ -63,6 +63,14 @@ def test_extract_json_invalid():
         query_planner._extract_json("no json here")
 
 
+def test_planner_prompt_contains_new_rules():
+    prompt = query_planner._PLANNER_SYSTEM_PROMPT
+    assert "同一步只能查询一张主表" in prompt
+    assert "每个时间段必须独立成步" in prompt
+    assert "不得超过 10 天" in prompt
+    assert "禁止在单条 SQL 里用" in prompt
+
+
 def test_plan_invalid_json_raises_runtime_error(tmp_path):
     ws = {"cwd": str(tmp_path), "mcp_config": str(tmp_path / "mcp.json"), "result_dir": str(tmp_path / "results")}
     with patch.object(query_planner.claude_cli, "run_with_system_prompt", return_value=("not json", "")):
@@ -113,6 +121,14 @@ def test_run_planned(tmp_path):
     assert "第2步" in result
     assert "【总结】" in result
     assert "100 元" in result
+
+
+def test_step_prompt_contains_new_rules():
+    prompt = query_planner._STEP_SYSTEM_PROMPT_TEMPLATE
+    assert "当前步骤只能调用一次 query_data" in prompt
+    assert "查询只能涉及一张主表" in prompt
+    assert "不得超过 10 天" in prompt
+    assert "禁止在当前 SQL 里用" in prompt
 
 
 def test_read_csv_preview(tmp_path):

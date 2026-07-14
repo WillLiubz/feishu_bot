@@ -58,7 +58,7 @@ def _parse(stdout_text):
     return result, session_id
 
 
-def run(question, ws, session_id=None, _retry=0, system_prompt=None):
+def run(question, ws, session_id=None, _retry=0, system_prompt=None, timeout=None):
     """
     Spawn claude subprocess. Feed question via stdin.
     Returns (answer_text, new_session_id).
@@ -106,7 +106,7 @@ def run(question, ws, session_id=None, _retry=0, system_prompt=None):
         t_comm = time.time()
         stdout, stderr = proc.communicate(
             input=full_prompt.encode("utf-8"),
-            timeout=config.CLAUDE_CLI_TIMEOUT,
+            timeout=timeout if timeout is not None else config.CLAUDE_CLI_TIMEOUT,
         )
         print(f"[claude_cli] communicate wait {int((time.time() - t_comm) * 1000)}ms", flush=True)
     except subprocess.TimeoutExpired:
@@ -117,7 +117,7 @@ def run(question, ws, session_id=None, _retry=0, system_prompt=None):
 
     if proc.returncode != 0:
         if session_id and _is_session_invalid(stderr_text) and _retry == 0:
-            return run(question, ws, session_id=None, _retry=1, system_prompt=system_prompt)
+            return run(question, ws, session_id=None, _retry=1, system_prompt=system_prompt, timeout=timeout)
         raise RuntimeError(f"Claude 异常退出 (rc={proc.returncode}): {stderr_text[:400]}")
 
     stdout_text = stdout.decode("utf-8", errors="replace")
@@ -132,11 +132,11 @@ def run(question, ws, session_id=None, _retry=0, system_prompt=None):
         else:
             raise
     if session_id and _retry == 0 and _is_tool_missing(answer):
-        return run(question, ws, session_id=None, _retry=1, system_prompt=system_prompt)
+        return run(question, ws, session_id=None, _retry=1, system_prompt=system_prompt, timeout=timeout)
     print(f"[claude_cli] total {int((time.time() - t0) * 1000)}ms", flush=True)
     return answer, new_sid
 
 
-def run_with_system_prompt(question, ws, system_prompt, session_id=None, _retry=0):
+def run_with_system_prompt(question, ws, system_prompt, session_id=None, _retry=0, timeout=None):
     """Convenience wrapper that injects a system prompt before the user question."""
-    return run(question, ws, session_id, _retry, system_prompt=system_prompt)
+    return run(question, ws, session_id, _retry, system_prompt=system_prompt, timeout=timeout)

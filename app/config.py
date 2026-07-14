@@ -117,7 +117,10 @@ DATA_API_SEARCH_URL = _get("data_api.search_url", "http://data-api.dc.uuzu.com/s
 DATA_API_DOWNLOAD_URL = _get("data_api.download_url", "http://data-api.download.dc.uuzu.com/download/")
 DATA_API_MAX_ROWS = int(_get("data_api.max_rows", 10000))
 DATA_API_MOCK = bool(_get("data_api.mock", False))
-DATA_API_MAX_RETRY = 10
+DATA_API_QUERY_TIMEOUT = int(_get("data_api.query_timeout", 120))
+DATA_API_DOWNLOAD_TIMEOUT = int(_get("data_api.download_timeout", 30))
+DATA_API_POLL_MAX_ATTEMPTS = int(_get("data_api.poll_max_attempts", 24))
+DATA_API_MAX_RETRY = int(_get("data_api.max_retry", 3))
 
 # Claude
 CLAUDE_MODEL = _get("claude.model", "claude-sonnet-4-6")

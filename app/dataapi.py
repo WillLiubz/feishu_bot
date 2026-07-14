@@ -4,6 +4,7 @@ import io
 import json
 import time
 import urllib.parse
+import concurrent.futures
 import requests
 import config
 
@@ -20,7 +21,8 @@ def _submit(sql):
     """Submit SQL to search endpoint, return task_id. Retries up to DATA_API_MAX_RETRY times."""
     api_params = urllib.parse.quote(json.dumps({"sql": sql}))
     last_err = None
-    for attempt in range(config.DATA_API_MAX_RETRY):
+    max_retry = config.DATA_API_MAX_RETRY
+    for attempt in range(max_retry):
         ts = str(int(time.time()))
         sign = generate_sign({
             "_key": config.DATA_API_KEY,
@@ -37,7 +39,7 @@ def _submit(sql):
             "sign": sign,
         }
         try:
-            resp = requests.post(config.DATA_API_SEARCH_URL, json=payload, timeout=30)
+            resp = requests.post(config.DATA_API_SEARCH_URL, json=payload, timeout=config.DATA_API_DOWNLOAD_TIMEOUT)
             data = resp.json()
             comment = data.get("return_comment") or ""
             if "失败" not in comment and data.get("return_code") == 0:
@@ -45,21 +47,23 @@ def _submit(sql):
             last_err = comment
         except Exception as e:
             last_err = str(e)
-        if attempt < config.DATA_API_MAX_RETRY - 1:
+        if attempt < max_retry - 1:
             time.sleep(3)
-    raise RuntimeError(f"数仓提交失败（重试 {config.DATA_API_MAX_RETRY} 次）: {last_err}")
+    raise RuntimeError(f"数仓提交失败（重试 {max_retry} 次）: {last_err}")
 
 
 _POLL_INTERVAL = 5
-_POLL_MAX_ATTEMPTS = 108  # ~9 minutes total
+_POLL_MAX_ATTEMPTS = getattr(config, "DATA_API_POLL_MAX_ATTEMPTS", 24)  # ~2 minutes default
 
 
-def _download_rows(task_id, max_rows):
+def _download_rows(task_id, max_rows, poll_max_attempts=None):
     """Download TSV result, poll until ready, parse into list[dict]."""
+    if poll_max_attempts is None:
+        poll_max_attempts = getattr(config, "DATA_API_POLL_MAX_ATTEMPTS", _POLL_MAX_ATTEMPTS)
     api_params = urllib.parse.quote(json.dumps({"task_id": task_id}))
     t0 = time.time()
 
-    for attempt in range(_POLL_MAX_ATTEMPTS):
+    for attempt in range(poll_max_attempts):
         ts = str(int(time.time()))
         sign = generate_sign({
             "_key": config.DATA_API_KEY,
@@ -73,7 +77,7 @@ def _download_rows(task_id, max_rows):
             "timestamp": ts,
             "sign": sign,
         }
-        resp = requests.post(config.DATA_API_DOWNLOAD_URL, json=payload, timeout=120)
+        resp = requests.post(config.DATA_API_DOWNLOAD_URL, json=payload, timeout=config.DATA_API_DOWNLOAD_TIMEOUT)
         content_type = resp.headers.get("content-type", "")
 
         if "multipart/form-data" in content_type:
@@ -94,7 +98,7 @@ def _download_rows(task_id, max_rows):
 
         if "text/html" in content_type or resp.text.strip().startswith("<"):
             # Task not ready yet, wait and retry
-            if attempt < _POLL_MAX_ATTEMPTS - 1:
+            if attempt < poll_max_attempts - 1:
                 time.sleep(_POLL_INTERVAL)
                 continue
         elapsed_sec = int(time.time() - t0)
@@ -105,14 +109,33 @@ def _download_rows(task_id, max_rows):
 
 
 
-def run_sql_rows(sql, max_rows=None):
-    """Execute SQL, return list[dict]. Uses mock data if DATA_API_MOCK is True."""
+def run_sql_rows(sql, max_rows=None, timeout=None):
+    """Execute SQL, return list[dict]. Uses mock data if DATA_API_MOCK is True.
+
+    Args:
+        sql: Presto SQL to execute.
+        max_rows: Maximum rows to keep from result.
+        timeout: If set, overall seconds allowed for submit+download before
+            raising RuntimeError("SQL 执行超时"). When None, use bounded poll limit.
+    """
     if max_rows is None:
         max_rows = config.DATA_API_MAX_ROWS
     if config.DATA_API_MOCK:
         return list(_MOCK_ROWS)
-    task_id = _submit(sql)
-    return _download_rows(task_id, max_rows)
+
+    def _execute():
+        task_id = _submit(sql)
+        return _download_rows(task_id, max_rows)
+
+    if timeout is None:
+        return _execute()
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+        future = executor.submit(_execute)
+        try:
+            return future.result(timeout=timeout)
+        except concurrent.futures.TimeoutError:
+            raise RuntimeError("SQL 执行超时")
 
 
 if __name__ == "__main__":

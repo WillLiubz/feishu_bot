@@ -59,6 +59,34 @@ def _strip_parens(sql):
     return ''.join(result)
 
 
+def _extract_parens(sql, start):
+    """Return the parenthesized substring beginning at start, or empty string if unmatched."""
+    if start >= len(sql) or sql[start] != '(':
+        return ""
+    depth = 0
+    for i in range(start, len(sql)):
+        if sql[i] == '(':
+            depth += 1
+        elif sql[i] == ')':
+            depth -= 1
+            if depth == 0:
+                return sql[start:i + 1]
+    return ""
+
+
+def _check_heavy_subquery(masked):
+    """Reject unbounded role_id/iuid IN (SELECT ...) subqueries that lack LIMIT."""
+    for match in re.finditer(r'\b(role_id|iuid)\s+IN\s*\(', masked, re.IGNORECASE):
+        paren_pos = match.end() - 1
+        subquery = _extract_parens(masked, paren_pos)
+        if subquery and re.search(r'\bselect\b', subquery, re.IGNORECASE):
+            if not re.search(r'\blimit\b', subquery, re.IGNORECASE):
+                raise SqlGuardError(
+                    "检测到未加 LIMIT 的 role_id/iuid IN (SELECT ...) 子查询，"
+                    "请改写为带 LIMIT 的 CTE 或前一步预计算的用户列表，避免全表扫描"
+                )
+
+
 def sanitize(sql):
     """
     Validate and sanitize SQL.
@@ -108,6 +136,9 @@ def sanitize(sql):
         for oid in re.findall(r"opgame_id\s*=\s*'?(\d+)'?", sql, re.IGNORECASE):
             if oid not in allowed:
                 raise SqlGuardError(f"无权限查询渠道 {oid}")
+
+    # Heavy subquery guard
+    _check_heavy_subquery(masked)
 
     # Auto-add LIMIT if not present at top level
     top = _strip_parens(masked)

@@ -79,11 +79,18 @@ def main():
         Execute a Presto SQL query against the data warehouse.
         Returns row_count, columns, preview (first 20 rows).
         Full result is written to result.csv in the workspace.
+        Result rows are capped to config.data_api.max_rows (default 10000).
+        Each query has a maximum execution time of config.data_api.query_timeout
+        seconds (default 120); exceeding it raises a timeout error.
         """
         t0 = time.time()
         try:
             clean_sql, use_odl = _prepare_sql(sql)
-            rows = dataapi.run_sql_rows(clean_sql)
+            rows = dataapi.run_sql_rows(
+                clean_sql,
+                max_rows=config.DATA_API_MAX_ROWS,
+                timeout=config.DATA_API_QUERY_TIMEOUT,
+            )
             # Save last result as result.csv (for backward compat)
             csv_path = result_dir / "result.csv"
             dquery.write_csv_to(rows, csv_path)

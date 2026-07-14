@@ -117,6 +117,27 @@ def test_channel_lock_blocks_other_opgame():
     config.LOCK_OPGAME_IDS = []
 
 
+def test_rejects_unbounded_in_subquery():
+    import sqlguard
+    sql = "SELECT * FROM t WHERE game_id = 312 AND role_id IN (SELECT role_id FROM big)"
+    with pytest.raises(ValueError, match="子查询"):
+        sqlguard.sanitize(sql)
+
+
+def test_allows_bounded_in_subquery():
+    import sqlguard
+    sql = "SELECT * FROM t WHERE game_id = 312 AND role_id IN (SELECT role_id FROM big LIMIT 1000)"
+    result = sqlguard.sanitize(sql)
+    assert result is not None
+
+
+def test_rejects_unbounded_iuid_subquery():
+    import sqlguard
+    sql = "SELECT * FROM raw_scribe_log.pay WHERE gameid = '312' AND iuid IN (SELECT iuid FROM big)"
+    with pytest.raises(ValueError, match="子查询"):
+        sqlguard.sanitize(sql)
+
+
 def test_channel_lock_allows_locked_opgame():
     import sqlguard, config
     config.LOCK_OPGAME_IDS = ["3553"]

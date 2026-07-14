@@ -49,7 +49,12 @@ def main():
     with patch.object(query_analyzer.claude_cli, "run_with_system_prompt", side_effect=fake_llm):
         for q in questions:
             result = query_analyzer.analyze(q, ws, claude_md)
-            print(f"[{result.mode}] {q}\n  理由：{result.reason}\n")
+            print(f"[{result.mode}] {q}\n  理由：{result.reason}")
+            if result.steps:
+                print("  步骤：")
+                for i, step in enumerate(result.steps, start=1):
+                    print(f"    {i}. {step.goal} | hint: {step.sql_hint}")
+            print()
     return 0
 
 

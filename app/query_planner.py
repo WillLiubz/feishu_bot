@@ -35,6 +35,13 @@ _PLANNER_SYSTEM_PROMPT = """\
   ]
 }
 
+强制规则：
+1. 同一步只能查询一张主表，不要把多个主表 JOIN 或 UNION 放在同一步
+2. 多时间段对比时，每个时间段必须独立成步，不要把多个时间段放在同一条 SQL 里
+3. 如果需要按付费用户/目标用户过滤其他表，必须先在前一步产出明确的用户列表（带 LIMIT），下一步用 JOIN 或显式 IN 列表；禁止在单条 SQL 里用 `role_id IN (SELECT role_id FROM 大表)` 子查询扫描整张行为/消耗表
+4. 每个步骤的查询 ds 范围不得超过 10 天，且只能是一个连续区间
+5. 单条 SQL 最多调用一次 query_data
+
 拆分原则：
 1. 每一步应该只查一张主表，或者一个明确的子问题
 2. 如果用户已经给了 role_id，第一步先确认/验证该 role_id 的付费或基础信息
@@ -54,6 +61,13 @@ _STEP_SYSTEM_PROMPT_TEMPLATE = """\
 当前步骤：{step_n}/{total_n}
 目标：{goal}
 提示：{sql_hint}
+
+强制规则：
+1. 当前步骤只能调用一次 query_data
+2. 查询只能涉及一张主表，禁止同时扫描 payrecharge / payconsume / bhbehavior 等多张大表
+3. ds 范围不得超过 10 天，且只能是一个连续区间
+4. 付费用户/目标用户列表必须先由前一步提供（CSV 或前一步结果），禁止在当前 SQL 里用 `role_id IN (SELECT role_id FROM 大表)` 这类子查询去扫描整张表
+5. 如果需要用目标用户列表过滤，先读取 results/query_*.csv 里的 role_id 列，生成带 LIMIT 的显式列表或临时结果，再执行当前查询
 
 要求：
 1. 用 query_data 工具执行一个 SQL 查询
