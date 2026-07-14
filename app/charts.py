@@ -24,17 +24,21 @@ MAX_BAR_ROWS_PNG = 20
 MAX_LINE_POINTS_PNG = 60
 MAX_SERIES = 3
 
-_DATE_COL_RE = re.compile(r"日期|date|^ds$|月份|月$", re.IGNORECASE)
+_DATE_COL_RE = re.compile(r"(^|_)(日期|date|ds|月份|月$)(_|$)", re.IGNORECASE)
 _DATE_VAL_RE = re.compile(r"^(\d{8}|\d{4}[-/]\d{1,2}[-/]\d{1,2}|\d{4}[-/]\d{1,2})$")
-_ID_COL_RE = re.compile(r"(^|_)(id|uid|ouid|iuid|openid|account|role)(_|$)", re.IGNORECASE)
+_ID_COL_RE = re.compile(r"(^|_)(id|uid|ouid|iuid|openid|account)(_|$)", re.IGNORECASE)
 
 
 def to_float(v):
     """Parse a cell value as float, tolerating thousands separators. None if not numeric."""
+    import math
     try:
-        return float(str(v).replace(",", "").strip())
+        f = float(str(v).replace(",", "").strip())
     except (ValueError, TypeError):
         return None
+    if math.isfinite(f):
+        return f
+    return None
 
 
 def _is_numeric_column(rows, header):
@@ -170,10 +174,12 @@ def render_pngs_for_dir(result_dir):
     """Generate query_N.png next to each chartable query_N.csv. Returns list of paths."""
     result_dir = Path(result_dir)
     paths = []
-    query_files = sorted(
-        result_dir.glob("query_*.csv"),
-        key=lambda p: int(re.search(r"query_(\d+)", p.stem).group(1)),
-    )
+
+    def _csv_index(p):
+        m = re.search(r"query_(\d+)", p.stem)
+        return int(m.group(1)) if m else -1
+
+    query_files = sorted(result_dir.glob("query_*.csv"), key=_csv_index)
     for csv_path in query_files:
         try:
             idx = int(re.search(r"query_(\d+)", csv_path.stem).group(1))

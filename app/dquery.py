@@ -80,6 +80,19 @@ def _write_data_sheet(wb, title, rows, sql_text="", conclusion=None):
 
     if not rows or (len(rows) == 1 and list(rows[0].values()) == ["(no data)"]):
         ws.cell(1, 1, "(no data)")
+        cursor = 3
+        if conclusion:
+            ws.cell(cursor, 1, "【结论】").font = Font(bold=True, color="595959")
+            body = ws.cell(cursor + 1, 1, conclusion)
+            body.alignment = Alignment(wrap_text=True, vertical="top")
+            ws.row_dimensions[cursor + 1].height = _estimate_height(conclusion, 50, 200)
+            cursor += 2
+        if sql_text:
+            ws.cell(cursor + 1, 1, "【SQL】").font = Font(bold=True, color="595959")
+            sql_cell = ws.cell(cursor + 2, 1, sql_text.strip())
+            sql_cell.font = Font(name="Courier New", size=9, color="595959")
+            sql_cell.alignment = Alignment(wrap_text=True)
+            ws.row_dimensions[cursor + 2].height = min(15 * (sql_text.count('\n') + 1), 200)
         return ws
 
     headers = list(rows[0].keys())
@@ -198,4 +211,4 @@ def rows_to_xlsx(rows, summary, title="报表", out_path=None):
     safe_title = re.sub(r'[\\/*?\[\]:]', '_', str(title))[:31] or "报表"
     _write_data_sheet(wb, safe_title, rows, conclusion=summary)
     wb.save(out_path)
-    return out_path
+    return str(out_path)

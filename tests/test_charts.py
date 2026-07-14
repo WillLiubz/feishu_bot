@@ -177,3 +177,13 @@ def test_add_native_chart_returns_false_for_invalid_type():
     ws = wb.active
     rows = [{"类别": "甲", "数值": "10"}]
     assert charts.add_native_chart(ws, rows, "unknown", "D2") is False
+
+
+def test_role_prefixed_metric_columns_are_not_excluded():
+    rows = [{"role_level": "1", "role_power": "100", "count": "5"}]
+    # role_level is the first (category) column, so it does not become a series.
+    # role_power and count are metrics and must not be excluded by the ID regex.
+    assert charts.series_columns(rows) == ["role_power", "count"]
+    assert not charts._ID_COL_RE.search("role_level")
+    assert not charts._ID_COL_RE.search("role_power")
+    assert charts._ID_COL_RE.search("role_id")
