@@ -1,6 +1,7 @@
 import json
 import os
 import re
+import tempfile
 import threading
 import time
 
@@ -378,10 +379,17 @@ def _handle_report(client, chat_id, message_id, report_type, text, game_config):
                 try:
                     ctype = charts.detect_chart_type(rows)
                     if ctype:
-                        png_path = file_or_dir.rsplit(".", 1)[0] + ".png"
-                        png = charts.render_png(rows, ctype, report_type, png_path)
-                        if png:
-                            _send_image(client, chat_id, png)
+                        fd, png_path = tempfile.mkstemp(suffix=".png")
+                        os.close(fd)
+                        try:
+                            png = charts.render_png(rows, ctype, report_type, png_path)
+                            if png:
+                                _send_image(client, chat_id, png)
+                        finally:
+                            try:
+                                os.remove(png_path)
+                            except OSError:
+                                pass
                 except Exception as e:
                     print(f"[bot] report chart failed: {e}", flush=True)
             _send_text(client, chat_id, summary)

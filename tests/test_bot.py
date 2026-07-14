@@ -1,6 +1,7 @@
 import sys
 from pathlib import Path
 from unittest.mock import patch, MagicMock
+import json
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "app"))
 
@@ -26,9 +27,6 @@ def test_handle_routes_planned_when_analyzer_says_planned(tmp_path):
                         bot._handle(None, "chat", "user", "msg", "question", [], game_config)
     mock_planned.assert_called_once()
     mock_simple.assert_not_called()
-
-
-import json
 
 
 def test_send_image_uploads_then_sends_image_message(tmp_path):
