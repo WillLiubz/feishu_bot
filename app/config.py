@@ -134,6 +134,7 @@ DEFAULT_SQL_LIMIT = int(_get("bot.default_sql_limit", 200))
 WHITELIST = bool(_get("bot.whitelist", False))
 USER_OPGAMES = _get("bot.user_opgames", {})
 NAMES = _get("bot.names", {})
+CHAT_GAMES = {str(k): int(v) for k, v in _get("bot.chat_games", {}).items()}
 
 # Logview
 LOGVIEW_HOST = _get("logview.host", "127.0.0.1")
@@ -162,6 +163,13 @@ def check():
         missing.append("game.game_id 或 games")
     if missing:
         raise ValueError(f"config.json 缺少必填项: {', '.join(missing)}")
+
+    valid_game_ids = GAME_IDS if MULTI_GAME_MODE else ([GAME_ID] if GAME_ID is not None else [])
+    for chat_id, gid in CHAT_GAMES.items():
+        if gid not in valid_game_ids:
+            raise ValueError(
+                f"config.json bot.chat_games 绑定了未配置的游戏: chat_id={chat_id} game_id={gid}"
+            )
 
     import re
     _TABLE_RE = re.compile(r'^[a-zA-Z0-9_.]+$')

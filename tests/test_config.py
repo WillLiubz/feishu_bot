@@ -107,3 +107,40 @@ def test_game_config_defaults_to_game_id(tmp_path, monkeypatch):
     importlib.reload(config)
     gc = config.game_config()
     assert gc.game_id == 312
+
+
+def test_chat_games_default_empty(tmp_path, monkeypatch):
+    root = _write_config(tmp_path)
+    monkeypatch.setenv("FEISHU_BOT_ROOT", root)
+    import importlib
+    import config
+    importlib.reload(config)
+    assert config.CHAT_GAMES == {}
+
+
+def test_chat_games_parsed_as_int(tmp_path, monkeypatch):
+    root = _write_config(tmp_path, {"bot": {"chat_games": {"oc_a": "312"}}})
+    monkeypatch.setenv("FEISHU_BOT_ROOT", root)
+    import importlib
+    import config
+    importlib.reload(config)
+    assert config.CHAT_GAMES == {"oc_a": 312}
+
+
+def test_check_rejects_unknown_chat_game(tmp_path, monkeypatch):
+    root = _write_config(tmp_path, {"bot": {"chat_games": {"oc_a": 999}}})
+    monkeypatch.setenv("FEISHU_BOT_ROOT", root)
+    import importlib
+    import config
+    importlib.reload(config)
+    with pytest.raises(ValueError, match="chat_games"):
+        config.check()
+
+
+def test_check_accepts_valid_chat_game(tmp_path, monkeypatch):
+    root = _write_config(tmp_path, {"bot": {"chat_games": {"oc_a": 312}}})
+    monkeypatch.setenv("FEISHU_BOT_ROOT", root)
+    import importlib
+    import config
+    importlib.reload(config)
+    config.check()  # 不应抛错
