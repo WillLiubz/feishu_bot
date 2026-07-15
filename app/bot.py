@@ -146,6 +146,26 @@ def _resolve_game(text, raise_on_missing=False):
 
     return config.game_config()
 
+def _resolve_game_for_chat(chat_id, text):
+    """Resolve game for a chat: bound chats are pinned to their game.
+
+    Unbound chats keep the legacy resolution (prefix -> alias -> default).
+    Bound chats skip prefix/alias matching entirely; an explicit numeric
+    prefix for a DIFFERENT game is rejected with ValueError.
+    """
+    bound_gid = config.CHAT_GAMES.get(chat_id)
+    if bound_gid is None:
+        return _resolve_game(text, raise_on_missing=True)
+    gc = config.game_config(bound_gid)
+    m = _game_id_pattern.match(text or "")
+    if m and int(m.group(1)) != bound_gid:
+        aliases = "/".join(gc.aliases) if gc.aliases else str(bound_gid)
+        raise ValueError(
+            f"本群仅支持查询游戏 {bound_gid}（{aliases}），"
+            f"如需查询游戏 {int(m.group(1))} 请到对应群。"
+        )
+    return gc
+
 def _send_query_summary(client, chat_id, message_id):
     """Send SQL execution details to Feishu after a query."""
     import sqlite3
