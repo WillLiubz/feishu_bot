@@ -19,7 +19,7 @@ _RULES_TEMPLATE = """\
 本月起始日期：{month_start}
 
 规则：
-1. 只能使用 query_data 工具查询数据，不允许使用任何其他工具
+1. 只能使用 query_data 工具查询数据，不允许使用任何其他工具（唯一例外是内置的 WaitForMcpServers：如果工具列表里暂时没有 query_data——MCP server 是异步加载的，需要几秒钟——先调用 WaitForMcpServers 等待 dquery 连接，最多重试 3 次，确认仍不可用再向用户说明，不要直接放弃，也不要用 Bash 等其他工具绕过）
 2. 只读查询，不允许修改数据
 3. 用中文回答用户问题
 4. 回答格式：先给一段中文总结（基于实际查到的数据），不需要返回表格

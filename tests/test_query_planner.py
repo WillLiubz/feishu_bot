@@ -129,6 +129,8 @@ def test_step_prompt_contains_new_rules():
     assert "查询只能涉及一张主表" in prompt
     assert "不得超过 10 天" in prompt
     assert "禁止在当前 SQL 里用" in prompt
+    # MCP 异步加载时引导模型等待，而不是宣布工具不可用或绕行
+    assert "WaitForMcpServers" in prompt
 
 
 def test_read_csv_preview(tmp_path):

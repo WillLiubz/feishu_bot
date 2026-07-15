@@ -9,9 +9,17 @@ import config
 
 
 def _child_env():
-    """Return environment for claude subprocess: remove CLAUDECODE to allow nesting."""
+    """Return environment for claude subprocess.
+
+    Strip every CLAUDE*/AI_AGENT variable, not just CLAUDECODE: when the bot
+    itself is launched from inside a Claude Code session, inherited vars
+    (CLAUDE_CODE_SESSION_ID, CLAUDE_CODE_CHILD_SESSION, ...) make the child
+    CLI attach to the parent session and corrupt its tool list.
+    """
     env = os.environ.copy()
-    env.pop("CLAUDECODE", None)
+    for key in list(env):
+        if key.startswith("CLAUDE") or key == "AI_AGENT":
+            env.pop(key, None)
     env["PYTHONIOENCODING"] = "utf-8"
     return env
 
@@ -36,10 +44,15 @@ def _is_session_invalid(text):
     return "session" in t and ("invalid" in t or "not found" in t or "expired" in t)
 
 
+_TOOL_MISSING_HINTS = (
+    "不可用", "不存在", "无法使用", "无法调用", "not available",
+    "未挂载", "没有挂载", "未连接", "不在我", "不在工具列表", "TOOL_MISSING",
+)
+
+
 def _is_tool_missing(text):
-    return "query_data" in text and any(
-        kw in text for kw in ("没有", "不可用", "不存在", "无法使用", "not available")
-    )
+    # 注意不要用裸"没有"做判据：正常结论常说"查询没有返回数据"
+    return "query_data" in text and any(kw in text for kw in _TOOL_MISSING_HINTS)
 
 
 def _parse(stdout_text):
@@ -114,6 +127,9 @@ def run(question, ws, session_id=None, _retry=0, system_prompt=None, timeout=Non
         raise RuntimeError("处理超时")
 
     stderr_text = stderr.decode("utf-8", errors="replace")
+    if stderr_text.strip():
+        # rc==0 时 stderr 平时被丢弃，但 MCP 加载告警只出现在这里，落日志便于排查
+        print(f"[claude_cli] child stderr: {stderr_text[:800]}", flush=True)
 
     if proc.returncode != 0:
         if session_id and _is_session_invalid(stderr_text) and _retry == 0:
@@ -131,7 +147,10 @@ def run(question, ws, session_id=None, _retry=0, system_prompt=None, timeout=Non
             new_sid = ""
         else:
             raise
-    if session_id and _retry == 0 and _is_tool_missing(answer):
+    if _retry == 0 and _is_tool_missing(answer):
+        # 新版 CLI 异步加载 MCP server，模型可能在工具就绪前回答"工具不可用"。
+        # 分步流程没有 session_id，同样需要一次全新进程重试。
+        print("[claude_cli] tool missing in answer, retrying with fresh process", flush=True)
         return run(question, ws, session_id=None, _retry=1, system_prompt=system_prompt, timeout=timeout)
     print(f"[claude_cli] total {int((time.time() - t0) * 1000)}ms", flush=True)
     return answer, new_sid

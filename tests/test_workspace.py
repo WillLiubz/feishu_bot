@@ -13,3 +13,9 @@ def test_get_claude_md_text(tmp_path):
     (ws_dir / "CLAUDE.md").write_text(md_text, encoding="utf-8")
     ws = {"cwd": str(ws_dir), "mcp_config": str(ws_dir / "mcp.json"), "result_dir": str(ws_dir / "results")}
     assert workspace.get_claude_md_text(ws) == md_text
+
+
+def test_rules_template_contains_mcp_wait_guidance():
+    # MCP server 在新版 CLI 中异步连接，规则里必须引导模型等待而不是直接放弃
+    assert "WaitForMcpServers" in workspace._RULES_TEMPLATE
+    assert "异步" in workspace._RULES_TEMPLATE

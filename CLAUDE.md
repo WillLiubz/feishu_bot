@@ -187,9 +187,14 @@ python debug/test_reports.py
 - `debug/test_mcp_server.py` — MCP server
 - `debug/test_reports.py` — 固定报表
 - `debug/test_dataapi.py` — 数仓 API
+- `debug/test_mcp_mount.py` — 复刻 bot spawn 方式验证子 CLI 的 MCP 工具挂载
+- `debug/test_mcp_handshake.py` — 裸 MCP stdio 握手，验证 mcp_server 工具 schema
 
 ## 注意事项
 
 - 子 Claude CLI 每次调用超时 600 秒（`claude.timeout`），复杂查询靠拆分为多步避免单步超时。
+- **新版子 CLI（2.1.210+）异步连接 MCP server**：会话开始的几秒内 `mcp__dquery__query_data` 可能尚未注入工具列表。工作区规则与分步提示词已引导模型先用 `WaitForMcpServers` 等待；`claude_cli.run` 检测到"工具不可用"答案时会以全新进程重试一次（不限于 resume 场景）。
+- **子进程环境必须干净**：`claude_cli._child_env` 会剥离所有 `CLAUDE*` / `AI_AGENT` 环境变量。若从 Claude Code 会话内启动 bot（例如调试时用 Bash 调 `run_bot.bat`），不剥离这些变量会导致子 CLI 附着到父会话、MCP 工具必挂。
+- `--allowedTools mcp__dquery__query_data` 在新版 CLI 中**不限制内置工具**（Bash/Read/Write 仍可用），提示词已明确禁止绕行；直连 `dataapi` 会绕过 sqlguard 校验和 query_log 日志。
 - `data/workspaces/<chat_id>/<game_id>/results/` 保存每次查询的 CSV，每次查询前会清空。
 - `data/bot.db` 记录会话、查询日志、执行详情，本地生成，已忽略。
