@@ -375,6 +375,10 @@ def _on_message(data):
                        f"你好 {uname}\nopen_id: {user_id}\n可查范围: {scope}")
             return
 
+        if text.strip().lower() == "chatid":
+            _send_text(client, chat_id, f"chat_id: {chat_id}")
+            return
+
         if any(t in text.lower() for t in config.HELP_TRIGGERS if t not in ("?", "？")) or text.strip() in ("?", "？"):
             _send_text(client, chat_id, config.HELP_TEXT)
             return
@@ -383,6 +387,14 @@ def _on_message(data):
         allowed, opgames = _policy(user_id)
         if not allowed:
             _send_text(client, chat_id, "抱歉，你没有使用权限。如需开通请联系管理员。")
+            return
+
+        # Resolve game BEFORE acquiring locks: a failed resolution must not
+        # leak the semaphore / active-chat slot (that wedged the chat).
+        try:
+            game_config = _resolve_game_for_chat(chat_id, text)
+        except ValueError as e:
+            _send_text(client, chat_id, str(e))
             return
 
         # Concurrency: per-chat serialization
@@ -397,12 +409,6 @@ def _on_message(data):
             with _active_lock:
                 _active_chats.discard(chat_id)
             _send_text(client, chat_id, "当前查询较多，请稍后再试。")
-            return
-
-        try:
-            game_config = _resolve_game(text, raise_on_missing=True)
-        except ValueError as e:
-            _send_text(client, chat_id, str(e))
             return
 
         # Route: fixed report or LLM

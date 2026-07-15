@@ -1,3 +1,4 @@
+import json
 import sys
 from pathlib import Path
 from unittest.mock import patch, MagicMock
@@ -68,3 +69,45 @@ def test_resolve_game_for_chat_bound_ignores_alias():
     with patch.object(bot.config, "CHAT_GAMES", {"oc_a": 312}), \
          patch.object(bot.config, "game_config", return_value=_gc(312, ["女3"])):
         assert bot._resolve_game_for_chat("oc_a", "女1玩法参与率").game_id == 312
+
+
+def _make_event(chat_id="oc_chat1", text="hello"):
+    from types import SimpleNamespace
+    msg = SimpleNamespace(
+        chat_id=chat_id,
+        message_id="om_m1",
+        message_type="text",
+        content=json.dumps({"text": text}, ensure_ascii=False),
+    )
+    sender = SimpleNamespace(sender_id=SimpleNamespace(open_id="ou_u1"))
+    return SimpleNamespace(event=SimpleNamespace(message=msg, sender=sender))
+
+
+def test_on_message_game_resolve_failure_releases_locks():
+    chat_id = "oc_leak_test"
+    event = _make_event(chat_id=chat_id, text="999 昨日充值")
+    with patch.object(bot, "_lark_client", return_value=MagicMock()), \
+         patch.object(bot.store, "log_in"), \
+         patch.object(bot, "_send_text") as mock_send, \
+         patch.object(bot.reports, "match", return_value=None), \
+         patch.object(bot, "_resolve_game_for_chat", side_effect=ValueError("未配置游戏 999")):
+        bot._active_chats.discard(chat_id)
+        bot._on_message(event)
+    # 错误提示已发送
+    assert any("未配置游戏 999" in str(c.args[2]) for c in mock_send.call_args_list)
+    # 解析失败不得占用资源：群不在活跃集合，信号量可获取
+    assert chat_id not in bot._active_chats
+    assert bot._query_sem.acquire(blocking=False)
+    bot._query_sem.release()
+
+
+def test_chatid_command():
+    chat_id = "oc_chatid_test"
+    event = _make_event(chat_id=chat_id, text="chatid")
+    with patch.object(bot, "_lark_client", return_value=MagicMock()), \
+         patch.object(bot.store, "log_in"), \
+         patch.object(bot, "_handle"), \
+         patch.object(bot, "_send_text") as mock_send:
+        bot._on_message(event)
+    assert mock_send.call_count == 1
+    assert mock_send.call_args.args[2] == f"chat_id: {chat_id}"
