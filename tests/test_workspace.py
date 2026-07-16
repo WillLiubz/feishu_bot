@@ -19,3 +19,9 @@ def test_rules_template_contains_mcp_wait_guidance():
     # MCP server 在新版 CLI 中异步连接，规则里必须引导模型等待而不是直接放弃
     assert "WaitForMcpServers" in workspace._RULES_TEMPLATE
     assert "异步" in workspace._RULES_TEMPLATE
+
+
+def test_rules_template_requires_player_nickname_and_server():
+    # 查询具体玩家信息时，规则要求用户额外提供昵称和服务器，缺失时先确认
+    assert "昵称" in workspace._RULES_TEMPLATE
+    assert "服务器" in workspace._RULES_TEMPLATE
