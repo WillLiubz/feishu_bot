@@ -8,6 +8,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent))
 
 import config
+import configdb
 import dataapi
 import db_rewrite
 import dquery
@@ -44,6 +45,44 @@ def _prepare_sql(sql: str) -> tuple[str, bool]:
     if not use_odl:
         sanitized = db_rewrite.rewrite_odl_to_raw(sanitized)
     return sanitized, use_odl
+
+
+def run_config_query(sql: str, chat_id: str, message_id: str) -> dict:
+    """
+    query_config 工具的核心逻辑（独立于 MCP 注册，便于单测）。
+
+    护栏校验 → 直连当前游戏的 MySQL 配置库 → 全量返回行（不写 CSV，
+    配置查找是中间步骤，不混入最终合并的 Excel）。
+    """
+    t0 = time.time()
+    cfg = config.game_config(config.GAME_ID).config_db or {}
+    if not cfg:
+        latency_ms = int((time.time() - t0) * 1000)
+        store.log_query(chat_id, message_id, f"[config] {sql}", 0, "error",
+                        latency_ms, "当前游戏未配置静态配置库")
+        raise RuntimeError("当前游戏未配置静态配置库（config_db），无法查询道具/活动等静态配置")
+    try:
+        clean_sql = configdb.sanitize(sql, int(cfg.get("max_rows", 500)))
+    except ValueError as e:
+        latency_ms = int((time.time() - t0) * 1000)
+        store.log_query(chat_id, message_id, f"[config] {sql}", 0, "guard_error",
+                        latency_ms, str(e))
+        raise
+    try:
+        rows = configdb.query(cfg, clean_sql, max_rows=int(cfg.get("max_rows", 500)))
+        latency_ms = int((time.time() - t0) * 1000)
+        store.log_query(chat_id, message_id, f"[config] {clean_sql}", len(rows), "ok", latency_ms)
+        print(f"[mcp_server] query_config ok rows={len(rows)} latency={latency_ms}ms", flush=True)
+        return {
+            "row_count": len(rows),
+            "columns": list(rows[0].keys()) if rows else [],
+            "rows": rows,
+        }
+    except Exception as e:
+        latency_ms = int((time.time() - t0) * 1000)
+        store.log_query(chat_id, message_id, f"[config] {clean_sql}", 0, "error",
+                        latency_ms, str(e))
+        raise
 
 
 def main():
@@ -116,6 +155,17 @@ def main():
             latency_ms = int((time.time() - t0) * 1000)
             store.log_query(chat_id, message_id, sql, 0, "error", latency_ms, str(e))
             raise
+
+    @mcp.tool()
+    def query_config(sql: str) -> dict:
+        """
+        查询当前游戏的静态配置 MySQL 库（只读）。
+        用途：道具ID→道具名称、活动ID→活动信息等静态配置查找。
+        仅允许 SELECT / SHOW / DESCRIBE / EXPLAIN；禁止任何写操作。
+        结果上限 config_db.max_rows 行（默认 500），单次查询超时 read_timeout 秒（默认 30）。
+        不知道有哪些表时先 SHOW TABLES 探索。SQL 使用 MySQL 语法，不需要 game_id 条件。
+        """
+        return run_config_query(sql, chat_id, message_id)
 
     mcp.run()
 
