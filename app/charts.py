@@ -78,11 +78,14 @@ def detect_chart_type(rows):
     """Return 'line' | 'pie' | 'bar' | None based on data shape.
 
     - 无数值列 → None（不画图）
+    - 单行结果（只有一个数据）→ None（不画图，文字罗列数字即可）
     - 首列是日期 → 折线图
     - 行数 ≤ 8 且单数值列 → 饼图
     - 其余 → 柱状图
     """
     if not rows:
+        return None
+    if len(rows) < 2:
         return None
     series = series_columns(rows)
     if not series:

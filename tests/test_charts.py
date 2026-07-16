@@ -42,8 +42,26 @@ def test_detect_bar_for_many_categories():
 
 
 def test_detect_bar_for_multiple_value_columns():
-    rows = [{"渠道": "a", "收入": "10", "付费人数": "3"}]
+    rows = [{"渠道": "a", "收入": "10", "付费人数": "3"},
+            {"渠道": "b", "收入": "20", "付费人数": "5"}]
     assert charts.detect_chart_type(rows) == "bar"
+
+
+def test_detect_none_for_single_row_single_value():
+    # 结果只有一个数据：不出图，文字罗列数字即可
+    rows = [{"指标": "昨日充值总额", "金额": "12345"}]
+    assert charts.detect_chart_type(rows) is None
+
+
+def test_detect_none_for_single_row_multi_value():
+    # 单行多数值列同样视为"一个数据"（如昨日 DAU/收入/付费人数一行）
+    rows = [{"渠道": "全渠道", "收入": "10", "付费人数": "3"}]
+    assert charts.detect_chart_type(rows) is None
+
+
+def test_detect_none_for_single_row_date():
+    rows = [{"日期": "20260715", "收入": "100"}]
+    assert charts.detect_chart_type(rows) is None
 
 
 def test_id_columns_excluded_from_series():
