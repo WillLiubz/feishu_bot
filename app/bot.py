@@ -1,6 +1,7 @@
 import json
 import os
 import re
+import tempfile
 import threading
 import time
 
@@ -11,6 +12,7 @@ from lark_oapi.api.im.v1 import (
 )
 
 import account_cache
+import charts
 import claude_cli
 import config
 import dquery
@@ -193,14 +195,66 @@ def _send_query_summary(client, chat_id, message_id):
     _send_text(client, chat_id, "\n".join(lines))
 
 
-def _send_results(client, chat_id, ws):
-    """Send generated result files (Excel or CSV) to Feishu."""
+def _send_image(client, chat_id, image_path):
+    """Upload an image file and send it as an image message. Never raises."""
+    from lark_oapi.api.im.v1 import CreateImageRequest, CreateImageRequestBody
+    try:
+        with open(image_path, "rb") as f:
+            up_req = CreateImageRequest.builder() \
+                .request_body(
+                    CreateImageRequestBody.builder()
+                    .image_type("message")
+                    .image(f)
+                    .build()
+                ).build()
+            up_resp = client.im.v1.image.create(up_req)
+        if not up_resp.success():
+            print(f"[bot] image upload failed: {up_resp.code} {up_resp.msg}", flush=True)
+            return
+        image_key = up_resp.data.image_key
+        req = CreateMessageRequest.builder() \
+            .receive_id_type("chat_id") \
+            .request_body(
+                CreateMessageRequestBody.builder()
+                .receive_id(chat_id)
+                .msg_type("image")
+                .content(json.dumps({"image_key": image_key}))
+                .build()
+            ).build()
+        client.im.v1.message.create(req)
+    except Exception as e:
+        print(f"[bot] send image failed: {e}", flush=True)
+
+
+def _send_charts(client, chat_id, result_dir):
+    """Render PNG charts for query_N.csv files and send as image messages. Never raises."""
+    try:
+        for png in charts.render_pngs_for_dir(result_dir):
+            _send_image(client, chat_id, png)
+    except Exception as e:
+        print(f"[bot] send charts failed: {e}", flush=True)
+
+
+def _send_result_file(client, chat_id, result_dir, conclusions=None, final_summary=None):
+    """Combine query CSVs into result.xlsx (with charts and conclusions) and send it."""
     import os
-    xlsx_path = dquery.combine_to_excel(ws["result_dir"])
+    xlsx_path = dquery.combine_to_excel(
+        result_dir, conclusions=conclusions, final_summary=final_summary
+    )
     if xlsx_path and os.path.exists(xlsx_path):
         _send_file(client, chat_id, xlsx_path, file_name="result.xlsx")
-    elif os.path.exists(ws["result_dir"] + "/result.csv"):
-        _send_file(client, chat_id, ws["result_dir"] + "/result.csv")
+    elif os.path.exists(result_dir + "/result.csv"):
+        _send_file(client, chat_id, result_dir + "/result.csv")
+
+
+def _read_csv_rows(csv_path):
+    """Read a CSV file into list[dict]; returns [] on failure."""
+    import csv as _csv
+    try:
+        with open(csv_path, encoding="utf-8-sig", newline="") as f:
+            return list(_csv.DictReader(f))
+    except Exception:
+        return []
 
 
 def _handle_simple(client, chat_id, user_id, message_id, text, opgames, game_config, ws):
@@ -212,8 +266,9 @@ def _handle_simple(client, chat_id, user_id, message_id, text, opgames, game_con
         _send_text(client, chat_id, "🔎 正在查询数仓，请稍候…")
         answer, new_sid = claude_cli.run(text, ws, sid)
         store.set_session(chat_id, new_sid, game_config.game_id)
+        _send_charts(client, chat_id, ws["result_dir"])
         _send_text(client, chat_id, answer)
-        _send_results(client, chat_id, ws)
+        _send_result_file(client, chat_id, ws["result_dir"], conclusions=[answer])
         _send_query_summary(client, chat_id, message_id)
         latency = int((time.time() - t0) * 1000)
         store.log_out(chat_id, message_id, "ok", latency, session_id=new_sid)
@@ -242,20 +297,24 @@ def _handle_simple(client, chat_id, user_id, message_id, text, opgames, game_con
 
 
 def _run_planned_body(client, chat_id, message_id, text, ws):
-    """Shared body for planned query handlers. Returns answer text."""
-    answer = query_planner.run_planned(text, ws)
-    return answer
+    """Plan first, then execute. Returns (summaries, final_summary)."""
+    plan_obj = query_planner.plan(text, ws)
+    summaries = []
+    for i, step in enumerate(plan_obj.steps, start=1):
+        summary = query_planner.execute_step(step, i, len(plan_obj.steps), ws, summaries)
+        summaries.append(summary)
+    final_summary = query_planner.summarize(text, ws, summaries)
+    return summaries, final_summary
 
 
 def _run_planned_with_steps_body(client, chat_id, message_id, text, ws, steps):
-    """Shared body for planned query handlers with analyzer-provided steps."""
+    """Execute analyzer-provided steps. Returns (summaries, final_summary)."""
     summaries = []
     for i, step in enumerate(steps, start=1):
         summary = query_planner.execute_step(step, i, len(steps), ws, summaries)
         summaries.append(summary)
     final_summary = query_planner.summarize(text, ws, summaries)
-    answer = "\n".join(f"第{i}步：{s}" for i, s in enumerate(summaries, start=1)) + "\n\n【总结】\n" + final_summary
-    return answer
+    return summaries, final_summary
 
 
 def _planned_handler(client, chat_id, user_id, message_id, text, opgames, game_config, ws, steps=None):
@@ -264,11 +323,14 @@ def _planned_handler(client, chat_id, user_id, message_id, text, opgames, game_c
     try:
         _send_text(client, chat_id, "🔎 该问题较复杂，正在分步查询，请稍候…")
         if steps is not None:
-            answer = _run_planned_with_steps_body(client, chat_id, message_id, text, ws, steps)
+            summaries, final_summary = _run_planned_with_steps_body(client, chat_id, message_id, text, ws, steps)
         else:
-            answer = _run_planned_body(client, chat_id, message_id, text, ws)
+            summaries, final_summary = _run_planned_body(client, chat_id, message_id, text, ws)
+        answer = "\n".join(f"第{i}步：{s}" for i, s in enumerate(summaries, start=1)) + "\n\n【总结】\n" + final_summary
+        _send_charts(client, chat_id, ws["result_dir"])
         _send_text(client, chat_id, answer)
-        _send_results(client, chat_id, ws)
+        _send_result_file(client, chat_id, ws["result_dir"],
+                          conclusions=summaries, final_summary=final_summary)
         _send_query_summary(client, chat_id, message_id)
         latency = int((time.time() - t0) * 1000)
         store.log_out(chat_id, message_id, "ok", latency)
@@ -325,17 +387,43 @@ def _handle_report(client, chat_id, message_id, report_type, text, game_config):
     try:
         _send_text(client, chat_id, "📊 正在生成固定报表，请稍候…")
         summary, file_or_dir = reports.run(report_type, text, game_config=game_config)
-        _send_text(client, chat_id, summary)
-        # Some reports return a result directory containing query_N.csv files
-        # that should be merged into a multi-sheet Excel.
         if file_or_dir and os.path.isdir(file_or_dir):
-            xlsx_path = dquery.combine_to_excel(file_or_dir)
-            if xlsx_path and os.path.exists(xlsx_path):
-                _send_file(client, chat_id, xlsx_path, file_name="result.xlsx")
-            elif os.path.exists(file_or_dir + "/result.csv"):
-                _send_file(client, chat_id, file_or_dir + "/result.csv")
+            # 多步报表（如玩家分层）：与 LLM 查询一致，图 → 文字 → 文件
+            _send_charts(client, chat_id, file_or_dir)
+            _send_text(client, chat_id, summary)
+            _send_result_file(client, chat_id, file_or_dir, conclusions=[summary])
         elif file_or_dir:
-            _send_file(client, chat_id, file_or_dir)
+            # 单 CSV 报表（KPI/LTV/月榜）：构造带图表+结论的 xlsx
+            rows = _read_csv_rows(file_or_dir)
+            if rows:
+                try:
+                    ctype = charts.detect_chart_type(rows)
+                    if ctype:
+                        fd, png_path = tempfile.mkstemp(suffix=".png")
+                        os.close(fd)
+                        try:
+                            png = charts.render_png(rows, ctype, report_type, png_path)
+                            if png:
+                                _send_image(client, chat_id, png)
+                        finally:
+                            try:
+                                os.remove(png_path)
+                            except OSError:
+                                pass
+                except Exception as e:
+                    print(f"[bot] report chart failed: {e}", flush=True)
+            _send_text(client, chat_id, summary)
+            if rows:
+                try:
+                    xlsx = dquery.rows_to_xlsx(rows, summary, title=report_type)
+                    _send_file(client, chat_id, xlsx, file_name="result.xlsx")
+                except Exception as e:
+                    print(f"[bot] rows_to_xlsx failed: {e}", flush=True)
+                    _send_file(client, chat_id, file_or_dir)
+            else:
+                _send_file(client, chat_id, file_or_dir)
+        else:
+            _send_text(client, chat_id, summary)
         store.log_out(chat_id, message_id, "ok", int((time.time() - t0) * 1000))
     except Exception as e:
         _send_text(client, chat_id, "报表生成失败，请稍后重试")

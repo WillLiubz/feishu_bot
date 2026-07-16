@@ -111,3 +111,77 @@ def test_chatid_command():
         bot._on_message(event)
     assert mock_send.call_count == 1
     assert mock_send.call_args.args[2] == f"chat_id: {chat_id}"
+
+
+def test_send_image_uploads_then_sends_image_message(tmp_path):
+    client = MagicMock()
+    up_resp = MagicMock()
+    up_resp.success.return_value = True
+    up_resp.data.image_key = "img_key_1"
+    client.im.v1.image.create.return_value = up_resp
+    img = tmp_path / "q.png"
+    img.write_bytes(b"\x89PNG fake")
+    bot._send_image(client, "chat1", str(img))
+    client.im.v1.image.create.assert_called_once()
+    client.im.v1.message.create.assert_called_once()
+    req = client.im.v1.message.create.call_args[0][0]
+    assert req.request_body.msg_type == "image"
+    assert json.loads(req.request_body.content) == {"image_key": "img_key_1"}
+
+
+def test_send_image_skips_message_when_upload_fails(tmp_path):
+    client = MagicMock()
+    up_resp = MagicMock()
+    up_resp.success.return_value = False
+    client.im.v1.image.create.return_value = up_resp
+    img = tmp_path / "q.png"
+    img.write_bytes(b"\x89PNG fake")
+    bot._send_image(client, "chat1", str(img))
+    client.im.v1.message.create.assert_not_called()
+
+
+def test_send_charts_never_raises(tmp_path):
+    client = MagicMock()
+    with patch.object(bot.charts, "render_pngs_for_dir", side_effect=RuntimeError("boom")):
+        bot._send_charts(client, "chat1", str(tmp_path))  # 不应抛异常
+    client.im.v1.message.create.assert_not_called()
+
+
+def test_send_charts_sends_each_png(tmp_path):
+    client = MagicMock()
+    up_resp = MagicMock()
+    up_resp.success.return_value = True
+    up_resp.data.image_key = "k"
+    client.im.v1.image.create.return_value = up_resp
+    p1 = tmp_path / "query_1.png"
+    p2 = tmp_path / "query_2.png"
+    p1.write_bytes(b"\x89PNG fake")
+    p2.write_bytes(b"\x89PNG fake")
+    with patch.object(bot.charts, "render_pngs_for_dir", return_value=[str(p1), str(p2)]):
+        bot._send_charts(client, "chat1", str(tmp_path))
+    assert client.im.v1.image.create.call_count == 2
+    assert client.im.v1.message.create.call_count == 2
+
+
+def test_send_result_file_passes_conclusions_through(tmp_path):
+    client = MagicMock()
+    xlsx = tmp_path / "result.xlsx"
+    xlsx.write_bytes(b"x")
+    with patch.object(bot.dquery, "combine_to_excel", return_value=str(xlsx)) as m:
+        with patch.object(bot, "_send_file") as sf:
+            bot._send_result_file(client, "chat1", str(tmp_path),
+                                  conclusions=["c1"], final_summary="fs")
+    m.assert_called_once_with(str(tmp_path), conclusions=["c1"], final_summary="fs")
+    sf.assert_called_once()
+
+
+def test_planned_body_returns_structured_summaries(tmp_path):
+    ws = {"result_dir": str(tmp_path)}
+    with patch.object(bot.query_planner, "execute_step", side_effect=["s1", "s2"]):
+        with patch.object(bot.query_planner, "summarize", return_value="final"):
+            summaries, final = bot._run_planned_with_steps_body(
+                None, "chat", "msg", "text", ws,
+                [bot.query_planner.PlanStep("g1", "h1"), bot.query_planner.PlanStep("g2", "h2")],
+            )
+    assert summaries == ["s1", "s2"]
+    assert final == "final"
