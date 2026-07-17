@@ -81,6 +81,15 @@ _GAME_SPECIFIC_RULES = {
 """,
 }
 
+_CONFIG_DB_RULES = """\
+静态配置查询（MySQL 配置库）：
+- 查道具名称、活动信息等静态配置时，使用 query_config 工具，直接写 MySQL 语法 SQL
+- 只允许 SELECT / SHOW / DESCRIBE / EXPLAIN；不知道有哪些表时先 SHOW TABLES 探索
+- 配置库与数仓是两个独立数据库：数仓表名（gamelog_raw.* 等）不能用在 query_config 里，反之亦然
+- query_config 的 SQL 不需要 game_id 条件
+- 查到的配置值用于辅助解读数仓结果（如把 item_id 翻译成道具名），不要对配置库做全表扫描式查询
+"""
+
 
 def _safe(s):
     return re.sub(r'[^a-zA-Z0-9_-]', '_', s)
@@ -130,7 +139,18 @@ def prepare(chat_id, message_id, game_config=None, opgames=None):
         game_id=game_config.game_id, ds_start=game_config.ds_start,
         game_specific_rules=game_specific_rules,
     )
-    claude_md = rules + channel_block + user_scope + "\n" + schema_text
+
+    config_db_block = ""
+    config_db = getattr(game_config, "config_db", None) or {}
+    if config_db:
+        config_db_block = "\n" + _CONFIG_DB_RULES
+        config_schema_name = config_db.get("schema")
+        if config_schema_name:
+            config_schema_path = _ROOT / config_schema_name
+            if config_schema_path.exists():
+                config_db_block += "\n" + config_schema_path.read_text(encoding="utf-8") + "\n"
+
+    claude_md = rules + channel_block + user_scope + config_db_block + "\n" + schema_text
     (ws_dir / "CLAUDE.md").write_text(claude_md, encoding="utf-8")
 
     # .claude/settings.json: child CLI only needs the dquery MCP tool.
@@ -142,7 +162,7 @@ def prepare(chat_id, message_id, game_config=None, opgames=None):
     claude_dir.mkdir(exist_ok=True)
     settings = {
         "permissions": {
-            "allow": ["mcp__dquery__query_data"],
+            "allow": ["mcp__dquery__query_data", "mcp__dquery__query_config"],
         }
     }
     (claude_dir / "settings.json").write_text(

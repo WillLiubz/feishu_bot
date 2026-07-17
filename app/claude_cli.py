@@ -95,7 +95,7 @@ def run(question, ws, session_id=None, _retry=0, system_prompt=None, timeout=Non
         "--permission-mode", "bypassPermissions",
         "--model", config.CLAUDE_MODEL,
         "--mcp-config", ws["mcp_config"],
-        "--allowedTools", "mcp__dquery__query_data",
+        "--allowedTools", "mcp__dquery__query_data,mcp__dquery__query_config",
     ]
     if session_id:
         cmd += ["--resume", session_id]

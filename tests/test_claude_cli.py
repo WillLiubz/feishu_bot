@@ -107,3 +107,13 @@ def test_run_logs_child_stderr_on_success(capsys):
         claude_cli.run("问题", dict(_WS), session_id=None)
     out = capsys.readouterr().out
     assert "MCP warning: slow server" in out
+
+
+def test_run_allowed_tools_includes_query_config():
+    procs = [_FakeProc(_json_stdout("ok"))]
+    with patch.object(claude_cli.subprocess, "Popen", side_effect=procs) as popen:
+        claude_cli.run("问题", dict(_WS), session_id=None)
+    cmd = popen.call_args[0][0]
+    i = cmd.index("--allowedTools")
+    assert "mcp__dquery__query_data" in cmd[i + 1]
+    assert "mcp__dquery__query_config" in cmd[i + 1]
