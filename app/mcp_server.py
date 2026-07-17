@@ -63,7 +63,7 @@ def run_config_query(sql: str, chat_id: str, message_id: str) -> dict:
         raise RuntimeError("当前游戏未配置静态配置库（config_db），无法查询道具/活动等静态配置")
     try:
         clean_sql = configdb.sanitize(sql, int(cfg.get("max_rows", 500)))
-    except ValueError as e:
+    except configdb.ConfigGuardError as e:
         latency_ms = int((time.time() - t0) * 1000)
         store.log_query(chat_id, message_id, f"[config] {sql}", 0, "guard_error",
                         latency_ms, str(e))

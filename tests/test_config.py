@@ -195,7 +195,7 @@ def test_check_rejects_config_db_missing_host(tmp_path, monkeypatch):
 
 
 def test_check_rejects_config_db_non_int_port(tmp_path, monkeypatch):
-    cdb = {"host": "h", "user": "u", "database": "d", "port": "3306"}
+    cdb = {"host": "h", "user": "u", "password": "p", "database": "d", "port": "3306"}
     root = _write_config(tmp_path, {"games": _games_with_config_db(cdb)})
     monkeypatch.setenv("FEISHU_BOT_ROOT", root)
     import importlib
@@ -205,8 +205,52 @@ def test_check_rejects_config_db_non_int_port(tmp_path, monkeypatch):
         config.check()
 
 
+def test_check_rejects_config_db_missing_password(tmp_path, monkeypatch):
+    cdb = {"host": "h", "user": "u", "database": "d"}
+    root = _write_config(tmp_path, {"games": _games_with_config_db(cdb)})
+    monkeypatch.setenv("FEISHU_BOT_ROOT", root)
+    import importlib
+    import config
+    importlib.reload(config)
+    with pytest.raises(ValueError, match="password"):
+        config.check()
+
+
+def test_check_rejects_config_db_non_int_connect_timeout(tmp_path, monkeypatch):
+    cdb = {"host": "h", "user": "u", "password": "p", "database": "d", "connect_timeout": "5"}
+    root = _write_config(tmp_path, {"games": _games_with_config_db(cdb)})
+    monkeypatch.setenv("FEISHU_BOT_ROOT", root)
+    import importlib
+    import config
+    importlib.reload(config)
+    with pytest.raises(ValueError, match="connect_timeout"):
+        config.check()
+
+
+def test_check_rejects_config_db_non_int_read_timeout(tmp_path, monkeypatch):
+    cdb = {"host": "h", "user": "u", "password": "p", "database": "d", "read_timeout": "30"}
+    root = _write_config(tmp_path, {"games": _games_with_config_db(cdb)})
+    monkeypatch.setenv("FEISHU_BOT_ROOT", root)
+    import importlib
+    import config
+    importlib.reload(config)
+    with pytest.raises(ValueError, match="read_timeout"):
+        config.check()
+
+
+def test_check_rejects_config_db_non_int_max_rows(tmp_path, monkeypatch):
+    cdb = {"host": "h", "user": "u", "password": "p", "database": "d", "max_rows": "500"}
+    root = _write_config(tmp_path, {"games": _games_with_config_db(cdb)})
+    monkeypatch.setenv("FEISHU_BOT_ROOT", root)
+    import importlib
+    import config
+    importlib.reload(config)
+    with pytest.raises(ValueError, match="max_rows"):
+        config.check()
+
+
 def test_check_accepts_valid_config_db_and_warns_on_missing_schema(tmp_path, monkeypatch, capsys):
-    cdb = {"host": "h", "user": "u", "database": "d", "schema": "gm_schema_missing.md"}
+    cdb = {"host": "h", "user": "u", "password": "p", "database": "d", "schema": "gm_schema_missing.md"}
     root = _write_config(tmp_path, {"games": _games_with_config_db(cdb)})
     monkeypatch.setenv("FEISHU_BOT_ROOT", root)
     import importlib

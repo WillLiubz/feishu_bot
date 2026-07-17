@@ -82,6 +82,9 @@ _GAME_SPECIFIC_RULES = {
 }
 
 _CONFIG_DB_RULES = """\
+静态配置查询例外：
+- 上述“只能使用 query_data”规则的唯一例外是：当本游戏配置了静态配置库（config_db）时，可用 query_config（对应 MCP 工具名 mcp__dquery__query_config）查询道具/活动名称等静态配置。除此之外仍不允许使用其他工具。
+
 静态配置查询（MySQL 配置库）：
 - 查道具名称、活动信息等静态配置时，使用 query_config 工具，直接写 MySQL 语法 SQL
 - 只允许 SELECT / SHOW / DESCRIBE / EXPLAIN；不知道有哪些表时先 SHOW TABLES 探索

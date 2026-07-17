@@ -46,6 +46,11 @@ def test_string_literal_with_banned_word_not_misjudged():
 
 # ---------- sanitize: 非法语句 ----------
 
+def test_comment_without_space_rejected():
+    with pytest.raises(configdb.ConfigGuardError):
+        configdb.sanitize("SELECT 1 #comment")
+
+
 @pytest.mark.parametrize("sql", [
     "INSERT INTO t VALUES (1)",
     "UPDATE t SET a = 1",
@@ -61,6 +66,8 @@ def test_string_literal_with_banned_word_not_misjudged():
     "LOAD DATA INFILE '/tmp/x' INTO TABLE t",
     "LOCK TABLES t READ",
     "KILL 123",
+    "PREPARE stmt FROM 'SELECT 1'",
+    "EXECUTE stmt",
 ])
 def test_write_statements_rejected(sql):
     with pytest.raises(configdb.ConfigGuardError):

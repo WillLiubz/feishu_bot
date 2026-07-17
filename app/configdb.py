@@ -19,11 +19,12 @@ class ConfigGuardError(ValueError):
 
 _BANNED_KEYWORDS = re.compile(
     r'\b(insert|update|delete|drop|alter|create|truncate|merge|grant|revoke'
-    r'|replace|exec|call|use|set|load|handler|lock|unlock|kill|shutdown)\b',
+    r'|replace|exec|call|use|set|load|handler|lock|unlock|kill|shutdown'
+    r'|prepare|execute)\b',
     re.IGNORECASE,
 )
 _BANNED_PHRASES = re.compile(
-    r'(--|/\*|\*/|#\s|into\s+outfile|into\s+dumpfile|load_file|sleep\s*\(|benchmark\s*\()',
+    r'(--|/\*|\*/|#|into\s+outfile|into\s+dumpfile|load_file|sleep\s*\(|benchmark\s*\()',
     re.IGNORECASE,
 )
 _ALLOWED_START = re.compile(r'^\s*(select|show|describe|desc|explain)\b', re.IGNORECASE)

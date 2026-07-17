@@ -179,12 +179,15 @@ def check():
             cdb = gc.config_db or {}
             if not cdb:
                 continue
-            for field_name in ("host", "user", "database"):
+            for field_name in ("host", "user", "password", "database"):
                 if not cdb.get(field_name):
                     raise ValueError(f"config.json game {gid} config_db 缺少必填项: {field_name}")
-            port = cdb.get("port", 3306)
-            if not isinstance(port, int):
-                raise ValueError(f"config.json game {gid} config_db.port 必须是整数: {port!r}")
+            for field_name in ("port", "max_rows", "connect_timeout", "read_timeout"):
+                value = cdb.get(field_name)
+                if value is None:
+                    continue
+                if not isinstance(value, int):
+                    raise ValueError(f"config.json game {gid} config_db.{field_name} 必须是整数: {value!r}")
             schema_name = cdb.get("schema")
             if schema_name and not (_ROOT / schema_name).exists():
                 print(f"[config] 警告: game {gid} config_db.schema 文件不存在: {schema_name}")
