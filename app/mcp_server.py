@@ -47,12 +47,15 @@ def _prepare_sql(sql: str) -> tuple[str, bool]:
     return sanitized, use_odl
 
 
-def run_config_query(sql: str, chat_id: str, message_id: str) -> dict:
+def run_config_query(sql: str, chat_id: str, message_id: str, *, database: str | None = None) -> dict:
     """
     query_config 工具的核心逻辑（独立于 MCP 注册，便于单测）。
 
     护栏校验 → 直连当前游戏的 MySQL 配置库 → 全量返回行（不写 CSV，
     配置查找是中间步骤，不混入最终合并的 Excel）。
+
+    database: 可选覆盖 cfg['database']，用于访问 static_db（道具/英雄等
+    静态配置库），与 GM 配置库共享连接参数但库名不同。
     """
     t0 = time.time()
     cfg = config.game_config(config.GAME_ID).config_db or {}
@@ -69,7 +72,10 @@ def run_config_query(sql: str, chat_id: str, message_id: str) -> dict:
                         latency_ms, str(e))
         raise
     try:
-        rows = configdb.query(cfg, clean_sql, max_rows=int(cfg.get("max_rows", 500)))
+        target_db = database
+        if target_db is None:
+            target_db = cfg.get("static_database") or cfg.get("database")
+        rows = configdb.query(cfg, clean_sql, max_rows=int(cfg.get("max_rows", 500)), database=target_db)
         latency_ms = int((time.time() - t0) * 1000)
         store.log_query(chat_id, message_id, f"[config] {clean_sql}", len(rows), "ok", latency_ms)
         print(f"[mcp_server] query_config ok rows={len(rows)} latency={latency_ms}ms", flush=True)
@@ -157,15 +163,18 @@ def main():
             raise
 
     @mcp.tool()
-    def query_config(sql: str) -> dict:
+    def query_config(sql: str, database: str | None = None) -> dict:
         """
         查询当前游戏的静态配置 MySQL 库（只读）。
         用途：道具ID→道具名称、活动ID→活动信息等静态配置查找。
         仅允许 SELECT / SHOW / DESCRIBE / EXPLAIN；禁止任何写操作。
         结果上限 config_db.max_rows 行（默认 500），单次查询超时 read_timeout 秒（默认 30）。
         不知道有哪些表时先 SHOW TABLES 探索。SQL 使用 MySQL 语法，不需要 game_id 条件。
+
+        database: 可覆盖默认库名。当需要访问游戏静态配置库（如 static_item）时，
+        传入 "static_db" 对应的库名；默认访问 config_db.database（GM 运营库）。
         """
-        return run_config_query(sql, chat_id, message_id)
+        return run_config_query(sql, chat_id, message_id, database=database)
 
     mcp.run()
 

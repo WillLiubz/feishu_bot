@@ -56,7 +56,29 @@ def test_prepare_injects_config_db_rules_and_schema(tmp_path, monkeypatch):
     assert "item_config: 道具静态表" in text
 
 
-def test_prepare_omits_config_db_rules_when_unconfigured(tmp_path, monkeypatch):
+def test_prepare_injects_config_db_static_database_rule(tmp_path, monkeypatch):
+    (tmp_path / "gm_schema_312.md").write_text("# 配置库\n", encoding="utf-8")
+    gc = _gc(config_db={
+        "host": "h", "user": "u", "database": "gm_db", "static_database": "static_db",
+        "schema": "gm_schema_312.md",
+    })
+    _prepare_in_tmp(tmp_path, monkeypatch, gc)
+    text = (tmp_path / "data" / "workspaces" / "chat_cfg" / "CLAUDE.md").read_text(encoding="utf-8")
+    assert "GM 运营库名为 `gm_db`" in text
+    assert "游戏静态库" in text
+    assert "static_db" in text
+
+
+def test_prepare_uses_database_when_static_database_missing(tmp_path, monkeypatch):
+    (tmp_path / "gm_schema_312.md").write_text("# 配置库\n", encoding="utf-8")
+    gc = _gc(config_db={
+        "host": "h", "user": "u", "database": "only_db",
+        "schema": "gm_schema_312.md",
+    })
+    _prepare_in_tmp(tmp_path, monkeypatch, gc)
+    text = (tmp_path / "data" / "workspaces" / "chat_cfg" / "CLAUDE.md").read_text(encoding="utf-8")
+    assert "GM 运营库名为 `only_db`" in text
+    assert "游戏静态库（道具/英雄等中文名）名为 `only_db`" in text
     _prepare_in_tmp(tmp_path, monkeypatch, _gc())
     text = (tmp_path / "data" / "workspaces" / "chat_cfg" / "CLAUDE.md").read_text(encoding="utf-8")
     assert "query_config" not in text

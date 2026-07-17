@@ -155,6 +155,17 @@ def test_query_connects_with_defaults_and_closes(monkeypatch):
     assert kw["charset"] == "utf8mb4"
     assert kw["connect_timeout"] == 5
     assert kw["read_timeout"] == 30
+    assert kw["database"] == "d"
+
+
+def test_query_can_override_database(monkeypatch):
+    sink = _stub_connect(monkeypatch, [{"id": 2, "name": "金币"}])
+    configdb.query(
+        {"host": "h", "user": "u", "password": "p", "database": "d"},
+        "SELECT * FROM static_item",
+        database="static_db",
+    )
+    assert sink["kwargs"]["database"] == "static_db"
 
 
 def test_query_respects_custom_timeouts_and_charset(monkeypatch):

@@ -249,6 +249,33 @@ def test_check_rejects_config_db_non_int_max_rows(tmp_path, monkeypatch):
         config.check()
 
 
+def test_check_accepts_config_db_with_static_database(tmp_path, monkeypatch):
+    cdb = {
+        "host": "h", "user": "u", "password": "p", "database": "d",
+        "static_database": "static_db",
+    }
+    root = _write_config(tmp_path, {"games": _games_with_config_db(cdb)})
+    monkeypatch.setenv("FEISHU_BOT_ROOT", root)
+    import importlib
+    import config
+    importlib.reload(config)
+    config.check()  # 不抛错
+
+
+def test_check_rejects_config_db_invalid_static_database(tmp_path, monkeypatch):
+    cdb = {
+        "host": "h", "user": "u", "password": "p", "database": "d",
+        "static_database": 123,
+    }
+    root = _write_config(tmp_path, {"games": _games_with_config_db(cdb)})
+    monkeypatch.setenv("FEISHU_BOT_ROOT", root)
+    import importlib
+    import config
+    importlib.reload(config)
+    with pytest.raises(ValueError, match="static_database"):
+        config.check()
+
+
 def test_check_accepts_valid_config_db_and_warns_on_missing_schema(tmp_path, monkeypatch, capsys):
     cdb = {"host": "h", "user": "u", "password": "p", "database": "d", "schema": "gm_schema_missing.md"}
     root = _write_config(tmp_path, {"games": _games_with_config_db(cdb)})

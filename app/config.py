@@ -188,6 +188,12 @@ def check():
                     continue
                 if not isinstance(value, int):
                     raise ValueError(f"config.json game {gid} config_db.{field_name} 必须是整数: {value!r}")
+            # static_database is optional; if provided it must be a string.
+            static_db = cdb.get("static_database")
+            if static_db is not None and not isinstance(static_db, str):
+                raise ValueError(
+                    f"config.json game {gid} config_db.static_database 必须是字符串: {static_db!r}"
+                )
             schema_name = cdb.get("schema")
             if schema_name and not (_ROOT / schema_name).exists():
                 print(f"[config] 警告: game {gid} config_db.schema 文件不存在: {schema_name}")

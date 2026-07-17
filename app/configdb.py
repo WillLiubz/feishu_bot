@@ -70,21 +70,26 @@ def sanitize(sql: str, max_rows: int = 500) -> str:
     return sql
 
 
-def query(cfg: dict, sql: str, max_rows: int = 500) -> list:
+def query(cfg: dict, sql: str, max_rows: int = 500, *, database: str | None = None) -> list:
     """
     Execute read-only SQL against the game's config MySQL DB.
 
     cfg: the game's config_db dict (host/port/user/password/database/charset/
     connect_timeout/read_timeout). Connection is opened per call and always
     closed. Result rows are clamped to max_rows.
+
+    database: override the database name from cfg. Used to switch from the GM
+    config database to the game static database (e.g. static_item) when both
+    share the same connection parameters.
     Returns list[dict].
     """
+    db_name = database if database is not None else cfg["database"]
     conn = pymysql.connect(
         host=cfg["host"],
         port=int(cfg.get("port", 3306)),
         user=cfg["user"],
         password=cfg.get("password", ""),
-        database=cfg["database"],
+        database=db_name,
         charset=cfg.get("charset", "utf8mb4"),
         connect_timeout=int(cfg.get("connect_timeout", 5)),
         read_timeout=int(cfg.get("read_timeout", 30)),

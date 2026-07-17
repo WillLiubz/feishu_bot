@@ -76,11 +76,32 @@ def test_run_config_query_returns_full_rows(monkeypatch):
     monkeypatch.setattr(mcp_server.config, "game_config", lambda gid=None: _gc_with_config_db(cdb))
     monkeypatch.setattr(mcp_server.store, "log_query", lambda *a, **k: None)
     fake_rows = [{"item_id": 1001, "name": "经验药水"}, {"item_id": 1002, "name": "金币"}]
-    monkeypatch.setattr(mcp_server.configdb, "query", lambda cfg, sql, max_rows=500: fake_rows)
+
+    def _query(cfg, sql, max_rows=500, *, database=None):
+        assert database == "d"
+        return fake_rows
+
+    monkeypatch.setattr(mcp_server.configdb, "query", _query)
     out = mcp_server.run_config_query("SELECT * FROM item_config", "c1", "m1")
     assert out["row_count"] == 2
     assert out["columns"] == ["item_id", "name"]
     assert out["rows"] == fake_rows
+
+
+def test_run_config_query_can_target_static_database(monkeypatch):
+    calls = []
+    cdb = {"host": "h", "user": "u", "database": "d", "static_database": "static_db", "max_rows": 500}
+    monkeypatch.setattr(mcp_server.config, "game_config", lambda gid=None: _gc_with_config_db(cdb))
+    monkeypatch.setattr(mcp_server.store, "log_query", lambda *a, **k: None)
+
+    def _query(cfg, sql, max_rows=500, *, database=None):
+        calls.append(database)
+        return [{"id": 1, "name": "药水"}]
+
+    monkeypatch.setattr(mcp_server.configdb, "query", _query)
+    out = mcp_server.run_config_query("SELECT * FROM static_item", "c1", "m1")
+    assert out["row_count"] == 1
+    assert calls == ["static_db"]
 
 
 def test_run_config_query_logs_sql_with_config_prefix(monkeypatch):
@@ -88,7 +109,7 @@ def test_run_config_query_logs_sql_with_config_prefix(monkeypatch):
     cdb = {"host": "h", "user": "u", "database": "d"}
     monkeypatch.setattr(mcp_server.config, "game_config", lambda gid=None: _gc_with_config_db(cdb))
     monkeypatch.setattr(mcp_server.store, "log_query", lambda *a, **k: logged.append(a))
-    monkeypatch.setattr(mcp_server.configdb, "query", lambda cfg, sql, max_rows=500: [])
+    monkeypatch.setattr(mcp_server.configdb, "query", lambda cfg, sql, max_rows=500, *, database=None: [])
     mcp_server.run_config_query("SHOW TABLES", "c1", "m1")
     assert logged[0][2].startswith("[config] ")
     assert logged[0][4] == "ok"
@@ -110,7 +131,7 @@ def test_run_config_query_db_error_logged(monkeypatch):
     monkeypatch.setattr(mcp_server.config, "game_config", lambda gid=None: _gc_with_config_db(cdb))
     monkeypatch.setattr(mcp_server.store, "log_query", lambda *a, **k: logged.append(a))
 
-    def _boom(cfg, sql, max_rows=500):
+    def _boom(cfg, sql, max_rows=500, *, database=None):
         raise RuntimeError("连接失败")
 
     monkeypatch.setattr(mcp_server.configdb, "query", _boom)
