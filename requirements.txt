@@ -2,3 +2,4 @@ lark-oapi
 fastmcp
 openpyxl
 matplotlib
+pymysql

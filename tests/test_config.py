@@ -144,3 +144,144 @@ def test_check_accepts_valid_chat_game(tmp_path, monkeypatch):
     import config
     importlib.reload(config)
     config.check()  # 不应抛错
+
+
+def _games_with_config_db(config_db):
+    return [{
+        "game_id": 312,
+        "ds_start": "20260615",
+        "schema": "schema_312.md",
+        "aliases": ["女3"],
+        "reports": {
+            "login_table": "gamelog_raw.log_rolelogin",
+            "pay_table": "gamelog_raw.log_payrecharge",
+            "account_login_table": "gamelog_raw.log_accountlogin"
+        },
+        "lock_opgame_ids": [],
+        "config_db": config_db,
+    }]
+
+
+def test_config_db_defaults_empty(tmp_path, monkeypatch):
+    root = _write_config(tmp_path)
+    monkeypatch.setenv("FEISHU_BOT_ROOT", root)
+    import importlib
+    import config
+    importlib.reload(config)
+    assert config.GAMES[312].config_db == {}
+
+
+def test_config_db_loaded_from_games(tmp_path, monkeypatch):
+    cdb = {"host": "10.0.0.1", "user": "ro", "password": "p", "database": "cfg",
+           "schema": "gm_schema_312.md"}
+    root = _write_config(tmp_path, {"games": _games_with_config_db(cdb)})
+    monkeypatch.setenv("FEISHU_BOT_ROOT", root)
+    import importlib
+    import config
+    importlib.reload(config)
+    assert config.GAMES[312].config_db["host"] == "10.0.0.1"
+    assert config.GAMES[312].config_db["schema"] == "gm_schema_312.md"
+
+
+def test_check_rejects_config_db_missing_host(tmp_path, monkeypatch):
+    cdb = {"user": "ro", "database": "cfg"}
+    root = _write_config(tmp_path, {"games": _games_with_config_db(cdb)})
+    monkeypatch.setenv("FEISHU_BOT_ROOT", root)
+    import importlib
+    import config
+    importlib.reload(config)
+    with pytest.raises(ValueError, match="config_db"):
+        config.check()
+
+
+def test_check_rejects_config_db_non_int_port(tmp_path, monkeypatch):
+    cdb = {"host": "h", "user": "u", "password": "p", "database": "d", "port": "3306"}
+    root = _write_config(tmp_path, {"games": _games_with_config_db(cdb)})
+    monkeypatch.setenv("FEISHU_BOT_ROOT", root)
+    import importlib
+    import config
+    importlib.reload(config)
+    with pytest.raises(ValueError, match="port"):
+        config.check()
+
+
+def test_check_rejects_config_db_missing_password(tmp_path, monkeypatch):
+    cdb = {"host": "h", "user": "u", "database": "d"}
+    root = _write_config(tmp_path, {"games": _games_with_config_db(cdb)})
+    monkeypatch.setenv("FEISHU_BOT_ROOT", root)
+    import importlib
+    import config
+    importlib.reload(config)
+    with pytest.raises(ValueError, match="password"):
+        config.check()
+
+
+def test_check_rejects_config_db_non_int_connect_timeout(tmp_path, monkeypatch):
+    cdb = {"host": "h", "user": "u", "password": "p", "database": "d", "connect_timeout": "5"}
+    root = _write_config(tmp_path, {"games": _games_with_config_db(cdb)})
+    monkeypatch.setenv("FEISHU_BOT_ROOT", root)
+    import importlib
+    import config
+    importlib.reload(config)
+    with pytest.raises(ValueError, match="connect_timeout"):
+        config.check()
+
+
+def test_check_rejects_config_db_non_int_read_timeout(tmp_path, monkeypatch):
+    cdb = {"host": "h", "user": "u", "password": "p", "database": "d", "read_timeout": "30"}
+    root = _write_config(tmp_path, {"games": _games_with_config_db(cdb)})
+    monkeypatch.setenv("FEISHU_BOT_ROOT", root)
+    import importlib
+    import config
+    importlib.reload(config)
+    with pytest.raises(ValueError, match="read_timeout"):
+        config.check()
+
+
+def test_check_rejects_config_db_non_int_max_rows(tmp_path, monkeypatch):
+    cdb = {"host": "h", "user": "u", "password": "p", "database": "d", "max_rows": "500"}
+    root = _write_config(tmp_path, {"games": _games_with_config_db(cdb)})
+    monkeypatch.setenv("FEISHU_BOT_ROOT", root)
+    import importlib
+    import config
+    importlib.reload(config)
+    with pytest.raises(ValueError, match="max_rows"):
+        config.check()
+
+
+def test_check_accepts_config_db_with_static_database(tmp_path, monkeypatch):
+    cdb = {
+        "host": "h", "user": "u", "password": "p", "database": "d",
+        "static_database": "static_db",
+    }
+    root = _write_config(tmp_path, {"games": _games_with_config_db(cdb)})
+    monkeypatch.setenv("FEISHU_BOT_ROOT", root)
+    import importlib
+    import config
+    importlib.reload(config)
+    config.check()  # 不抛错
+
+
+def test_check_rejects_config_db_invalid_static_database(tmp_path, monkeypatch):
+    cdb = {
+        "host": "h", "user": "u", "password": "p", "database": "d",
+        "static_database": 123,
+    }
+    root = _write_config(tmp_path, {"games": _games_with_config_db(cdb)})
+    monkeypatch.setenv("FEISHU_BOT_ROOT", root)
+    import importlib
+    import config
+    importlib.reload(config)
+    with pytest.raises(ValueError, match="static_database"):
+        config.check()
+
+
+def test_check_accepts_valid_config_db_and_warns_on_missing_schema(tmp_path, monkeypatch, capsys):
+    cdb = {"host": "h", "user": "u", "password": "p", "database": "d", "schema": "gm_schema_missing.md"}
+    root = _write_config(tmp_path, {"games": _games_with_config_db(cdb)})
+    monkeypatch.setenv("FEISHU_BOT_ROOT", root)
+    import importlib
+    import config
+    importlib.reload(config)
+    config.check()  # 不抛错
+    assert "gm_schema_missing.md" in capsys.readouterr().out

@@ -1,6 +1,6 @@
 import json
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Dict, List
 
@@ -18,6 +18,7 @@ class GameConfig:
     aliases: List[str]
     reports: dict
     lock_opgame_ids: List[int]
+    config_db: dict = field(default_factory=dict)
 
 
 def _load():
@@ -53,6 +54,7 @@ if _get("games"):
             aliases=g.get("aliases", []),
             reports=g.get("reports", {}),
             lock_opgame_ids=g.get("lock_opgame_ids", []),
+            config_db=g.get("config_db", {}) or {},
         )
         _GAMES[gc.game_id] = gc
     GAMES = _GAMES
@@ -170,6 +172,31 @@ def check():
             raise ValueError(
                 f"config.json bot.chat_games 绑定了未配置的游戏: chat_id={chat_id} game_id={gid}"
             )
+
+    # config_db validation (multi-game mode)
+    if MULTI_GAME_MODE:
+        for gid, gc in _GAMES.items():
+            cdb = gc.config_db or {}
+            if not cdb:
+                continue
+            for field_name in ("host", "user", "password", "database"):
+                if not cdb.get(field_name):
+                    raise ValueError(f"config.json game {gid} config_db 缺少必填项: {field_name}")
+            for field_name in ("port", "max_rows", "connect_timeout", "read_timeout"):
+                value = cdb.get(field_name)
+                if value is None:
+                    continue
+                if not isinstance(value, int):
+                    raise ValueError(f"config.json game {gid} config_db.{field_name} 必须是整数: {value!r}")
+            # static_database is optional; if provided it must be a string.
+            static_db = cdb.get("static_database")
+            if static_db is not None and not isinstance(static_db, str):
+                raise ValueError(
+                    f"config.json game {gid} config_db.static_database 必须是字符串: {static_db!r}"
+                )
+            schema_name = cdb.get("schema")
+            if schema_name and not (_ROOT / schema_name).exists():
+                print(f"[config] 警告: game {gid} config_db.schema 文件不存在: {schema_name}")
 
     import re
     _TABLE_RE = re.compile(r'^[a-zA-Z0-9_.]+$')
