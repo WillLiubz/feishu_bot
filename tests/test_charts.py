@@ -91,6 +91,42 @@ def test_slice_for_png_limits():
     assert len(charts._slice_for_png(rows, "bar")) == charts.MAX_BAR_ROWS_PNG
 
 
+def test_merge_other_pie_sums_remainder():
+    rows = [{"渠道": f"ch{i}", "收入": str(100 - i)} for i in range(10)]
+    out = charts._slice_for_png(rows, "pie")
+    assert len(out) == charts.MAX_PIE_CATEGORIES  # Top-7 + 其他
+    assert out[-1]["渠道"] == "其他"
+    top_sum = sum(float(r["收入"]) for r in out[:-1])
+    other = float(out[-1]["收入"])
+    assert top_sum + other == sum(100 - i for i in range(10))
+    # Top-N 按值降序
+    assert float(out[0]["收入"]) >= float(out[1]["收入"])
+
+
+def test_merge_other_bar_multi_series():
+    rows = [{"渠道": f"ch{i}", "收入": str(i), "付费人数": "1"} for i in range(20)]
+    out = charts._slice_for_png(rows, "bar")
+    assert len(out) == charts.MAX_BAR_ROWS_PNG  # Top-15 + 其他
+    assert out[-1]["渠道"] == "其他"
+    # "其他"行对所有系列列求和
+    assert float(out[-1]["收入"]) == sum(i for i in range(5))
+    assert float(out[-1]["付费人数"]) == 5
+
+
+def test_merge_other_keeps_order_when_under_limit():
+    rows = [{"渠道": f"ch{i}", "收入": str(i)} for i in range(5)]
+    out = charts._slice_for_png(rows, "bar")
+    assert [r["渠道"] for r in out] == [f"ch{i}" for i in range(5)]  # 不排序
+
+
+def test_downsample_keeps_first_and_last():
+    rows = [{"ds": f"202607{i:02d}", "v": str(i)} for i in range(100)]
+    out = charts._downsample(rows, 60)
+    assert len(out) <= 60
+    assert out[0]["ds"] == rows[0]["ds"]
+    assert out[-1]["ds"] == rows[-1]["ds"]
+
+
 _PIE_ROWS = [{"渠道": "甲", "收入": "30"}, {"渠道": "乙", "收入": "70"}]
 _LINE_ROWS = [{"日期": f"2026070{i}", "收入": str(i * 100)} for i in range(1, 4)]
 

@@ -19,9 +19,9 @@ try:
 except Exception:
     CHARTS_AVAILABLE = False
 
-MAX_PIE_CATEGORIES = 8
-MAX_BAR_ROWS_PNG = 20
-MAX_LINE_POINTS_PNG = 60
+MAX_PIE_CATEGORIES = 8       # 含"其他"：Top-7 + 其他
+MAX_BAR_ROWS_PNG = 16        # 含"其他"：Top-15 + 其他
+MAX_LINE_POINTS_PNG = 60     # 超出时均匀抽稀（保留首末点）
 MAX_SERIES = 3
 
 _DATE_COL_RE = re.compile(r"(^|_)(日期|date|ds|月份|月$)(_|$)", re.IGNORECASE)
@@ -97,13 +97,39 @@ def detect_chart_type(rows):
     return "bar"
 
 
+def _merge_other(rows, series, total_rows):
+    """按首系列值降序保留前 (total_rows-1) 类，其余合并为"其他"（各系列列求和）。
+
+    行数不超过 total_rows 时原样返回（不排序，保持原始顺序）。
+    """
+    if len(rows) <= total_rows or not series:
+        return rows[:total_rows] if not series else rows
+    cat = list(rows[0].keys())[0]
+    ordered = sorted(rows, key=lambda r: to_float(r.get(series[0])) or 0.0, reverse=True)
+    top, rest = ordered[:total_rows - 1], ordered[total_rows - 1:]
+    other = {cat: "其他"}
+    for h in series:
+        other[h] = str(sum(to_float(r.get(h)) or 0.0 for r in rest))
+    return top + [other]
+
+
+def _downsample(rows, max_points):
+    """均匀抽稀到不超过 max_points 行，保留首末点。"""
+    if len(rows) <= max_points:
+        return rows
+    step = (len(rows) - 1) / (max_points - 1)
+    idxs = sorted({round(i * step) for i in range(max_points)})
+    return [rows[i] for i in idxs]
+
+
 def _slice_for_png(rows, chart_type):
-    """Truncate rows for PNG rendering to keep charts readable."""
+    """为 PNG 渲染裁剪行：pie/bar 超限时 Top-N+其他归并，line 超限时均匀抽稀。"""
+    series = series_columns(rows)
     if chart_type == "pie":
-        return rows[:MAX_PIE_CATEGORIES]
+        return _merge_other(rows, series, MAX_PIE_CATEGORIES)
     if chart_type == "line":
-        return rows[:MAX_LINE_POINTS_PNG]
-    return rows[:MAX_BAR_ROWS_PNG]
+        return _downsample(rows, MAX_LINE_POINTS_PNG)
+    return _merge_other(rows, series, MAX_BAR_ROWS_PNG)
 
 
 def render_png(rows, chart_type, title, out_path):
