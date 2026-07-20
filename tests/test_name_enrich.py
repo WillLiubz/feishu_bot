@@ -88,7 +88,7 @@ def test_translate_160_item_id_filters_game_id(monkeypatch, tmp_path):
     assert name_enrich.translate_csv(str(p), _gc(160)) is True
     assert _read_csv(p)[0]["道具名称"] == "屠龙刀"
     assert "game_item" in calls[0] and "game_id = 160" in calls[0]
-    assert "'601229'" in calls[0]  # 非纯数字 ID 加引号
+    assert "'601229'" in calls[0]  # 160/312 强制加引号
 
 
 def test_skip_when_name_column_exists(monkeypatch, tmp_path):

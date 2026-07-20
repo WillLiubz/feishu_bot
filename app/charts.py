@@ -115,6 +115,8 @@ def _merge_other(rows, series, total_rows):
 
 def _downsample(rows, max_points):
     """均匀抽稀到不超过 max_points 行，保留首末点。"""
+    if max_points <= 1:
+        return rows[:1] if max_points == 1 and rows else []
     if len(rows) <= max_points:
         return rows
     step = (len(rows) - 1) / (max_points - 1)

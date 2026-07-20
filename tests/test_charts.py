@@ -127,6 +127,13 @@ def test_downsample_keeps_first_and_last():
     assert out[-1]["ds"] == rows[-1]["ds"]
 
 
+def test_downsample_handles_small_max_points():
+    rows = [{"ds": f"202607{i:02d}", "v": str(i)} for i in range(100)]
+    assert charts._downsample(rows, 1) == [rows[0]]
+    assert charts._downsample(rows, 0) == []
+    assert charts._downsample([], 1) == []
+
+
 _PIE_ROWS = [{"渠道": "甲", "收入": "30"}, {"渠道": "乙", "收入": "70"}]
 _LINE_ROWS = [{"日期": f"2026070{i}", "收入": str(i * 100)} for i in range(1, 4)]
 
