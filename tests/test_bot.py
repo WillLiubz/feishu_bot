@@ -185,3 +185,66 @@ def test_planned_body_returns_structured_summaries(tmp_path):
             )
     assert summaries == ["s1", "s2"]
     assert final == "final"
+
+
+def test_send_charts_prefers_comparison_when_labels_given(tmp_path):
+    client = MagicMock()
+    with patch.object(bot.charts, "render_comparison_for_dir", return_value=["cmp.png"]) as mc, \
+         patch.object(bot.charts, "render_pngs_for_dir") as ms, \
+         patch.object(bot, "_send_image") as si:
+        bot._send_charts(client, "chat1", str(tmp_path), step_labels=["5月", "6月"])
+    mc.assert_called_once_with(str(tmp_path), ["5月", "6月"])
+    ms.assert_not_called()
+    si.assert_called_once_with(client, "chat1", "cmp.png")
+
+
+def test_send_charts_falls_back_to_per_query_pngs(tmp_path):
+    client = MagicMock()
+    with patch.object(bot.charts, "render_comparison_for_dir", return_value=[]), \
+         patch.object(bot.charts, "render_pngs_for_dir", return_value=["q1.png"]) as ms, \
+         patch.object(bot, "_send_image") as si:
+        bot._send_charts(client, "chat1", str(tmp_path), step_labels=["5月", "6月"])
+    ms.assert_called_once_with(str(tmp_path))
+    si.assert_called_once_with(client, "chat1", "q1.png")
+
+
+def test_send_charts_without_labels_uses_per_query_pngs(tmp_path):
+    client = MagicMock()
+    with patch.object(bot.charts, "render_comparison_for_dir") as mc, \
+         patch.object(bot.charts, "render_pngs_for_dir", return_value=[]) as ms:
+        bot._send_charts(client, "chat1", str(tmp_path))
+    mc.assert_not_called()
+    ms.assert_called_once_with(str(tmp_path))
+
+
+def test_run_planned_body_returns_steps(tmp_path):
+    ws = {"result_dir": str(tmp_path)}
+    plan = bot.query_planner.Plan(steps=[bot.query_planner.PlanStep("g1", "h1")])
+    with patch.object(bot.query_planner, "plan", return_value=plan), \
+         patch.object(bot.query_planner, "execute_step", return_value="s1"), \
+         patch.object(bot.query_planner, "summarize", return_value="final"):
+        summaries, final, steps = bot._run_planned_body(None, "chat", "msg", "text", ws)
+    assert summaries == ["s1"] and final == "final"
+    assert [s.goal for s in steps] == ["g1"]
+
+
+def test_planned_handler_translates_and_passes_labels(tmp_path):
+    ws = {"result_dir": str(tmp_path)}
+    game_config = MagicMock()
+    game_config.game_id = 39
+    steps = [bot.query_planner.PlanStep("查5月充值", "h1"),
+             bot.query_planner.PlanStep("查6月充值", "h2")]
+    client = MagicMock()
+    # _planned_handler 的 finally 会 release 信号量，先 acquire 模拟真实流程
+    assert bot._query_sem.acquire(blocking=False)
+    with patch.object(bot, "_send_text"), \
+         patch.object(bot, "_send_query_summary"), \
+         patch.object(bot, "_send_result_file"), \
+         patch.object(bot.query_planner, "execute_step", side_effect=["s1", "s2"]), \
+         patch.object(bot.query_planner, "summarize", return_value="final"), \
+         patch.object(bot.name_enrich, "translate_dir", return_value=2) as mt, \
+         patch.object(bot, "_send_charts") as msc, \
+         patch.object(bot.store, "log_out"):
+        bot._planned_handler(client, "chat", "user", "msg", "对比", [], game_config, ws, steps=steps)
+    mt.assert_called_once_with(str(tmp_path), game_config)
+    assert msc.call_args.kwargs.get("step_labels") == ["查5月充值", "查6月充值"]

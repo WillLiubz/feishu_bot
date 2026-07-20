@@ -14,6 +14,7 @@ from lark_oapi.api.im.v1 import (
 import account_cache
 import charts
 import claude_cli
+import name_enrich
 import config
 import dquery
 import names
@@ -226,10 +227,19 @@ def _send_image(client, chat_id, image_path):
         print(f"[bot] send image failed: {e}", flush=True)
 
 
-def _send_charts(client, chat_id, result_dir):
-    """Render PNG charts for query_N.csv files and send as image messages. Never raises."""
+def _send_charts(client, chat_id, result_dir, step_labels=None):
+    """Render PNG charts and send as image messages. Never raises.
+
+    带 step_labels（分步查询）时先尝试合成跨期对比图；
+    结构不兼容时退回每期单图。
+    """
     try:
-        for png in charts.render_pngs_for_dir(result_dir):
+        pngs = []
+        if step_labels and len(step_labels) >= 2:
+            pngs = charts.render_comparison_for_dir(result_dir, step_labels)
+        if not pngs:
+            pngs = charts.render_pngs_for_dir(result_dir)
+        for png in pngs:
             _send_image(client, chat_id, png)
     except Exception as e:
         print(f"[bot] send charts failed: {e}", flush=True)
@@ -266,6 +276,7 @@ def _handle_simple(client, chat_id, user_id, message_id, text, opgames, game_con
         _send_text(client, chat_id, "🔎 正在查询数仓，请稍候…")
         answer, new_sid = claude_cli.run(text, ws, sid)
         store.set_session(chat_id, new_sid, game_config.game_id)
+        name_enrich.translate_dir(ws["result_dir"], game_config)
         _send_charts(client, chat_id, ws["result_dir"])
         _send_text(client, chat_id, answer)
         _send_result_file(client, chat_id, ws["result_dir"], conclusions=[answer])
@@ -297,14 +308,14 @@ def _handle_simple(client, chat_id, user_id, message_id, text, opgames, game_con
 
 
 def _run_planned_body(client, chat_id, message_id, text, ws):
-    """Plan first, then execute. Returns (summaries, final_summary)."""
+    """Plan first, then execute. Returns (summaries, final_summary, steps)."""
     plan_obj = query_planner.plan(text, ws)
     summaries = []
     for i, step in enumerate(plan_obj.steps, start=1):
         summary = query_planner.execute_step(step, i, len(plan_obj.steps), ws, summaries)
         summaries.append(summary)
     final_summary = query_planner.summarize(text, ws, summaries)
-    return summaries, final_summary
+    return summaries, final_summary, plan_obj.steps
 
 
 def _run_planned_with_steps_body(client, chat_id, message_id, text, ws, steps):
@@ -325,9 +336,11 @@ def _planned_handler(client, chat_id, user_id, message_id, text, opgames, game_c
         if steps is not None:
             summaries, final_summary = _run_planned_with_steps_body(client, chat_id, message_id, text, ws, steps)
         else:
-            summaries, final_summary = _run_planned_body(client, chat_id, message_id, text, ws)
+            summaries, final_summary, steps = _run_planned_body(client, chat_id, message_id, text, ws)
+        step_labels = [s.goal for s in steps]
         answer = "\n".join(f"第{i}步：{s}" for i, s in enumerate(summaries, start=1)) + "\n\n【总结】\n" + final_summary
-        _send_charts(client, chat_id, ws["result_dir"])
+        name_enrich.translate_dir(ws["result_dir"], game_config)
+        _send_charts(client, chat_id, ws["result_dir"], step_labels=step_labels)
         _send_text(client, chat_id, answer)
         _send_result_file(client, chat_id, ws["result_dir"],
                           conclusions=summaries, final_summary=final_summary)
