@@ -241,3 +241,66 @@ def test_role_prefixed_metric_columns_are_not_excluded():
     assert not charts._ID_COL_RE.search("role_level")
     assert not charts._ID_COL_RE.search("role_power")
     assert charts._ID_COL_RE.search("role_id")
+
+
+def _ds_rows(prefix, days, base=0):
+    return [{"ds": f"2026{prefix}{d:02d}", "收入": str(base + d)} for d in days]
+
+
+def test_comparison_type_none_for_single_dataset():
+    assert charts.comparison_type([_ds_rows("05", [1, 2])]) is None
+
+
+def test_comparison_type_none_for_mismatched_headers():
+    a = [{"ds": "20260501", "收入": "1"}]
+    b = [{"ds": "20260601", "付费人数": "2"}]
+    assert charts.comparison_type([a, b]) is None
+
+
+def test_comparison_type_line_when_all_first_cols_are_dates():
+    datasets = [_ds_rows("05", [1, 2]), _ds_rows("06", [1, 2])]
+    assert charts.comparison_type(datasets) == "line"
+
+
+def test_comparison_type_bar_when_first_col_is_dimension():
+    a = [{"渠道": "甲", "收入": "10"}, {"渠道": "乙", "收入": "20"}]
+    b = [{"渠道": "甲", "收入": "30"}, {"渠道": "乙", "收入": "40"}]
+    assert charts.comparison_type([a, b]) == "bar"
+
+
+def test_render_comparison_png_line(tmp_path):
+    if not charts.CHARTS_AVAILABLE:
+        pytest.skip("matplotlib not installed")
+    datasets = [_ds_rows("05", range(1, 6), base=100), _ds_rows("06", range(1, 6), base=200)]
+    out = charts.render_comparison_png(datasets, ["5月", "6月"], "充值对比", tmp_path / "cmp.png")
+    assert out and Path(out).exists() and Path(out).stat().st_size > 0
+
+
+def test_render_comparison_png_bar(tmp_path):
+    if not charts.CHARTS_AVAILABLE:
+        pytest.skip("matplotlib not installed")
+    a = [{"渠道": "甲", "收入": "10"}, {"渠道": "乙", "收入": "20"}]
+    b = [{"渠道": "甲", "收入": "30"}, {"渠道": "丙", "收入": "40"}]  # 类目并集
+    out = charts.render_comparison_png([a, b], ["5月", "6月"], "渠道对比", tmp_path / "cmp.png")
+    assert out and Path(out).exists()
+
+
+def test_render_comparison_png_none_when_incompatible(tmp_path):
+    a = [{"ds": "20260501", "收入": "1"}]
+    out = charts.render_comparison_png([a], ["5月"], "t", tmp_path / "cmp.png")
+    assert out is None
+
+
+def test_render_comparison_for_dir(tmp_path):
+    if not charts.CHARTS_AVAILABLE:
+        pytest.skip("matplotlib not installed")
+    (tmp_path / "query_1.csv").write_text("ds,收入\n20260501,10\n20260502,20\n", encoding="utf-8-sig")
+    (tmp_path / "query_2.csv").write_text("ds,收入\n20260601,30\n20260602,40\n", encoding="utf-8-sig")
+    paths = charts.render_comparison_for_dir(str(tmp_path), ["5月", "6月"])
+    assert len(paths) == 1 and paths[0].endswith("comparison.png")
+
+
+def test_render_comparison_for_dir_fallback_when_incompatible(tmp_path):
+    (tmp_path / "query_1.csv").write_text("ds,收入\n20260501,10\n", encoding="utf-8-sig")
+    (tmp_path / "query_2.csv").write_text("渠道,收入\n甲,20\n", encoding="utf-8-sig")
+    assert charts.render_comparison_for_dir(str(tmp_path), ["a", "b"]) == []

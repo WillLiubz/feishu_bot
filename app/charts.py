@@ -264,3 +264,109 @@ def add_native_chart(ws, rows, chart_type, anchor):
     chart.height = 8
     ws.add_chart(chart, anchor)
     return True
+
+
+def comparison_type(datasets):
+    """判断多个数据集能否合成一张对比图：'line' | 'bar' | None。
+
+    要求：≥2 个数据集、列名完全一致、系列列一致；
+    首列全是日期 → line，全不是日期 → bar，混杂 → None。
+    """
+    if len(datasets) < 2 or any(not d for d in datasets):
+        return None
+    headers0 = list(datasets[0][0].keys())
+    series0 = series_columns(datasets[0])
+    if not series0:
+        return None
+    for d in datasets[1:]:
+        if list(d[0].keys()) != headers0 or series_columns(d) != series0:
+            return None
+    date_flags = [_first_col_is_date(d) for d in datasets]
+    if all(date_flags):
+        return "line"
+    if any(date_flags):
+        return None
+    return "bar"
+
+
+def render_comparison_png(datasets, labels, title, out_path):
+    """把多个同构数据集渲染成一张多系列对比图。Returns str(out_path) or None.
+
+    只比较第一个系列列；labels 与 datasets 一一对应（不足补"查询N"，超出截断）。
+    """
+    if not CHARTS_AVAILABLE:
+        return None
+    ctype = comparison_type(datasets)
+    if not ctype:
+        return None
+    labels = [str(l)[:12] for l in list(labels)]
+    labels = (labels + [f"查询{i + 1}" for i in range(len(datasets))])[:len(datasets)]
+    labels = [l or f"查询{i + 1}" for i, l in enumerate(labels)]
+    cat = list(datasets[0][0].keys())[0]
+    val = series_columns(datasets[0])[0]
+    try:
+        fig, ax = plt.subplots(figsize=(9, 5))
+        try:
+            if ctype == "line":
+                xs = sorted({str(r.get(cat, "")) for d in datasets for r in d})
+                for d, lab in zip(datasets, labels):
+                    ymap = {str(r.get(cat, "")): to_float(r.get(val)) or 0.0 for r in d}
+                    ax.plot(xs, [ymap.get(x, 0.0) for x in xs], marker="o", label=lab)
+                ax.legend()
+                ax.tick_params(axis="x", rotation=45)
+            else:  # bar：类目并集分组柱状，超限时按总值取 Top-N + 其他
+                cats = list(dict.fromkeys(str(r.get(cat, "")) for d in datasets for r in d))
+                if len(cats) > MAX_BAR_ROWS_PNG:
+                    totals = {}
+                    for d in datasets:
+                        for r in d:
+                            k = str(r.get(cat, ""))
+                            totals[k] = totals.get(k, 0.0) + (to_float(r.get(val)) or 0.0)
+                    keep = set(sorted(totals, key=totals.get, reverse=True)[:MAX_BAR_ROWS_PNG - 1])
+                    cats = [c for c in cats if c in keep] + ["其他"]
+                width = 0.8 / len(datasets)
+                for i, (d, lab) in enumerate(zip(datasets, labels)):
+                    ymap = {str(r.get(cat, "")): to_float(r.get(val)) or 0.0 for r in d}
+                    ys = [
+                        sum(v for k, v in ymap.items() if k not in cats) if c == "其他"
+                        else ymap.get(c, 0.0)
+                        for c in cats
+                    ]
+                    ax.bar([x + i * width for x in range(len(cats))], ys, width=width, label=lab)
+                center = (len(datasets) - 1) * width / 2
+                ax.set_xticks([x + center for x in range(len(cats))])
+                ax.set_xticklabels(cats)
+                ax.legend()
+                ax.tick_params(axis="x", rotation=45)
+            ax.set_title(title)
+            fig.tight_layout()
+            fig.savefig(str(out_path), dpi=110, bbox_inches="tight")
+        finally:
+            plt.close(fig)
+        return str(out_path)
+    except Exception as e:
+        print(f"[charts] render_comparison_png failed: {e}", flush=True)
+        return None
+
+
+def render_comparison_for_dir(result_dir, labels, title="多期对比"):
+    """尝试把 result_dir 下的 query_*.csv 合成一张对比图。Returns [path] or []."""
+    result_dir = Path(result_dir)
+
+    def _csv_index(p):
+        m = re.search(r"query_(\d+)", p.stem)
+        return int(m.group(1)) if m else -1
+
+    csv_files = sorted(result_dir.glob("query_*.csv"), key=_csv_index)
+    if len(csv_files) < 2:
+        return []
+    datasets = []
+    for p in csv_files:
+        try:
+            with open(p, encoding="utf-8-sig", newline="") as f:
+                datasets.append(list(csv.DictReader(f)))
+        except Exception:
+            return []
+    out = result_dir / "comparison.png"
+    path = render_comparison_png(datasets, labels, title, out)
+    return [path] if path else []
