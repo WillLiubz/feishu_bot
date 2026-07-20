@@ -179,12 +179,14 @@ def test_planned_body_returns_structured_summaries(tmp_path):
     ws = {"result_dir": str(tmp_path)}
     with patch.object(bot.query_planner, "execute_step", side_effect=["s1", "s2"]):
         with patch.object(bot.query_planner, "summarize", return_value="final"):
-            summaries, final = bot._run_planned_with_steps_body(
+            summaries, final, step_csvs, failed = bot._run_planned_with_steps_body(
                 None, "chat", "msg", "text", ws,
                 [bot.query_planner.PlanStep("g1", "h1"), bot.query_planner.PlanStep("g2", "h2")],
             )
     assert summaries == ["s1", "s2"]
     assert final == "final"
+    assert step_csvs == [[], []]
+    assert failed == set()
 
 
 def test_send_charts_prefers_comparison_when_labels_given(tmp_path):
@@ -223,9 +225,10 @@ def test_run_planned_body_returns_steps(tmp_path):
     with patch.object(bot.query_planner, "plan", return_value=plan), \
          patch.object(bot.query_planner, "execute_step", return_value="s1"), \
          patch.object(bot.query_planner, "summarize", return_value="final"):
-        summaries, final, steps = bot._run_planned_body(None, "chat", "msg", "text", ws)
+        summaries, final, steps, step_csvs, failed = bot._run_planned_body(None, "chat", "msg", "text", ws)
     assert summaries == ["s1"] and final == "final"
     assert [s.goal for s in steps] == ["g1"]
+    assert failed == set()
 
 
 def test_planned_handler_translates_and_passes_labels(tmp_path):
@@ -234,13 +237,19 @@ def test_planned_handler_translates_and_passes_labels(tmp_path):
     game_config.game_id = 39
     steps = [bot.query_planner.PlanStep("查5月充值", "h1"),
              bot.query_planner.PlanStep("查6月充值", "h2")]
+
+    def fake_step(step, n, total, ws, prev):
+        # 每步产生一个 query_N.csv，标签才能与文件一一对齐
+        Path(ws["result_dir"], f"query_{n}.csv").write_text("a,b\n1,2\n", encoding="utf-8")
+        return f"s{n}"
+
     client = MagicMock()
     # _planned_handler 的 finally 会 release 信号量，先 acquire 模拟真实流程
     assert bot._query_sem.acquire(blocking=False)
     with patch.object(bot, "_send_text"), \
          patch.object(bot, "_send_query_summary"), \
          patch.object(bot, "_send_result_file"), \
-         patch.object(bot.query_planner, "execute_step", side_effect=["s1", "s2"]), \
+         patch.object(bot.query_planner, "execute_step", side_effect=fake_step), \
          patch.object(bot.query_planner, "summarize", return_value="final"), \
          patch.object(bot.name_enrich, "translate_dir", return_value=2) as mt, \
          patch.object(bot, "_send_charts") as msc, \
@@ -248,3 +257,143 @@ def test_planned_handler_translates_and_passes_labels(tmp_path):
         bot._planned_handler(client, "chat", "user", "msg", "对比", [], game_config, ws, steps=steps)
     mt.assert_called_once_with(str(tmp_path), game_config)
     assert msc.call_args.kwargs.get("step_labels") == ["查5月充值", "查6月充值"]
+
+
+def _make_steps(*goals):
+    return [bot.query_planner.PlanStep(g, f"h{i}") for i, g in enumerate(goals, 1)]
+
+
+def test_execute_steps_continues_after_failure(tmp_path):
+    """某步抛异常：标记失败、继续后续步骤、CSV 归属不错位。"""
+    ws = {"result_dir": str(tmp_path)}
+    steps = _make_steps("g1", "g2", "g3")
+
+    def fake_step(step, n, total, ws, prev):
+        if n == 2:
+            raise RuntimeError("处理超时")
+        # 失败步不产生 CSV，后续 CSV 编号前移（与 mcp_server 计数器行为一致）
+        name = "query_1.csv" if n == 1 else "query_2.csv"
+        Path(ws["result_dir"], name).write_text("a,b\n1,2\n", encoding="utf-8")
+        return f"s{n}"
+
+    with patch.object(bot.query_planner, "execute_step", side_effect=fake_step):
+        summaries, step_csvs, failed = bot._execute_steps(None, "chat", "text", ws, steps)
+    assert failed == {1}
+    assert summaries[0] == "s1" and summaries[2] == "s3"
+    assert "本步查询失败" in summaries[1] and "处理超时" in summaries[1]
+    assert step_csvs == [["query_1.csv"], [], ["query_2.csv"]]
+
+
+def test_execute_steps_failure_notice_best_effort(tmp_path):
+    """失败进度提示：client 异常也不影响步骤继续。"""
+    ws = {"result_dir": str(tmp_path)}
+    steps = _make_steps("g1", "g2")
+    client = MagicMock()
+    client.im.v1.message.create.side_effect = RuntimeError("network down")
+    with patch.object(bot.query_planner, "execute_step", side_effect=[RuntimeError("处理超时"), "s2"]):
+        summaries, step_csvs, failed = bot._execute_steps(client, "chat", "text", ws, steps)
+    assert failed == {0} and summaries[1] == "s2"
+
+
+def test_planned_handler_partial_results_on_step_failure(tmp_path):
+    """中间步骤超时：已完成步骤的翻译/图表/xlsx/总结照常返回。"""
+    ws = {"result_dir": str(tmp_path)}
+    game_config = MagicMock()
+    game_config.game_id = 312
+    steps = _make_steps("查7月充值", "查玩家行为")
+
+    def fake_step(step, n, total, ws, prev):
+        if n == 2:
+            raise RuntimeError("处理超时")
+        Path(ws["result_dir"], "query_1.csv").write_text("ds,充值\n20260701,100\n", encoding="utf-8")
+        return "s1"
+
+    client = MagicMock()
+    assert bot._query_sem.acquire(blocking=False)
+    with patch.object(bot, "_send_text") as mst, \
+         patch.object(bot, "_send_query_summary"), \
+         patch.object(bot, "_send_result_file") as msf, \
+         patch.object(bot.query_planner, "execute_step", side_effect=fake_step), \
+         patch.object(bot.query_planner, "summarize", return_value="final") as msm, \
+         patch.object(bot.name_enrich, "translate_dir", return_value=1) as mt, \
+         patch.object(bot, "_send_charts") as msc, \
+         patch.object(bot.store, "log_out") as mlo:
+        bot._planned_handler(client, "chat", "user", "msg", "分析", [], game_config, ws, steps=steps)
+    # 下半程完整执行：翻译、图表、xlsx、总结
+    mt.assert_called_once_with(str(tmp_path), game_config)
+    assert msc.call_args.kwargs.get("step_labels") == ["查7月充值"]
+    assert msf.call_args.kwargs.get("conclusions") == ["s1"]
+    assert msf.call_args.kwargs.get("final_summary") == "final"
+    # summarize 收到对齐后的 step_csvs（第2步无 CSV）
+    assert msm.call_args.kwargs.get("step_csvs") == [["query_1.csv"], []]
+    # 答案标注失败步骤与"部分结果"提示
+    sent = "\n".join(c.args[2] for c in mst.call_args_list)
+    assert "本步查询失败" in sent
+    assert "部分结果" in sent
+    # 有部分结果返回，状态记为 ok
+    assert mlo.call_args.args[2] == "ok"
+
+
+def test_planned_handler_all_steps_failed_sends_no_files(tmp_path):
+    """所有步骤失败：只回报失败原因，不调用 summarize、不发图表/附件。"""
+    ws = {"result_dir": str(tmp_path)}
+    game_config = MagicMock()
+    game_config.game_id = 312
+    steps = _make_steps("g1", "g2")
+    client = MagicMock()
+    assert bot._query_sem.acquire(blocking=False)
+    with patch.object(bot, "_send_text") as mst, \
+         patch.object(bot, "_send_result_file") as msf, \
+         patch.object(bot, "_send_charts") as msc, \
+         patch.object(bot.query_planner, "execute_step", side_effect=RuntimeError("处理超时")), \
+         patch.object(bot.query_planner, "summarize") as msm, \
+         patch.object(bot.store, "log_out") as mlo:
+        bot._planned_handler(client, "chat", "user", "msg", "分析", [], game_config, ws, steps=steps)
+    msm.assert_not_called()
+    msc.assert_not_called()
+    msf.assert_not_called()
+    sent = "\n".join(c.args[2] for c in mst.call_args_list)
+    assert "所有步骤均未成功" in sent
+    assert mlo.call_args.args[2] == "error"
+
+
+def test_safe_summarize_falls_back_on_failure(tmp_path):
+    ws = {"result_dir": str(tmp_path)}
+    with patch.object(bot.query_planner, "summarize", side_effect=RuntimeError("处理超时")):
+        result = bot._safe_summarize("q", ws, ["s1"], [["query_1.csv"]])
+    assert "最终总结生成失败" in result
+
+
+def test_handle_simple_timeout_returns_partial_results(tmp_path):
+    """simple 模式子进程超时但已有 CSV：走部分结果保底。"""
+    ws = {"result_dir": str(tmp_path)}
+    Path(ws["result_dir"], "query_1.csv").write_text("a,b\n1,2\n", encoding="utf-8")
+    game_config = MagicMock()
+    game_config.game_id = 312
+    client = MagicMock()
+    assert bot._query_sem.acquire(blocking=False)
+    with patch.object(bot.store, "get_session", return_value=None), \
+         patch.object(bot, "_send_text"), \
+         patch.object(bot.claude_cli, "run", side_effect=RuntimeError("处理超时")), \
+         patch.object(bot, "_send_partial_results") as msp, \
+         patch.object(bot.store, "log_out"):
+        bot._handle_simple(client, "chat", "user", "msg", "text", [], game_config, ws)
+    msp.assert_called_once()
+
+
+def test_handle_simple_timeout_without_results_keeps_old_message(tmp_path):
+    """simple 模式超时且无任何 CSV：维持原提示，不走部分结果。"""
+    ws = {"result_dir": str(tmp_path)}
+    game_config = MagicMock()
+    game_config.game_id = 312
+    client = MagicMock()
+    assert bot._query_sem.acquire(blocking=False)
+    with patch.object(bot.store, "get_session", return_value=None), \
+         patch.object(bot, "_send_text") as mst, \
+         patch.object(bot.claude_cli, "run", side_effect=RuntimeError("处理超时")), \
+         patch.object(bot, "_send_partial_results") as msp, \
+         patch.object(bot.store, "log_out"):
+        bot._handle_simple(client, "chat", "user", "msg", "text", [], game_config, ws)
+    msp.assert_not_called()
+    sent = "\n".join(c.args[2] for c in mst.call_args_list)
+    assert "查询超时，请简化问题后重试" in sent

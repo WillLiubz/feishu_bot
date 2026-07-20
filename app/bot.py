@@ -4,6 +4,7 @@ import re
 import tempfile
 import threading
 import time
+from pathlib import Path
 
 import lark_oapi as lark
 from lark_oapi.api.im.v1 import (
@@ -267,6 +268,35 @@ def _read_csv_rows(csv_path):
         return []
 
 
+def _query_csv_snapshot(result_dir):
+    """Return the set of query_*.csv file names currently in result_dir."""
+    try:
+        return {p.name for p in Path(result_dir).glob("query_*.csv")}
+    except Exception:
+        return set()
+
+
+def _csv_sort_key(name):
+    m = re.search(r"query_(\d+)", name)
+    return int(m.group(1)) if m else 0
+
+
+def _send_partial_results(client, chat_id, result_dir, game_config, note, step_labels=None):
+    """Best-effort delivery of whatever query_*.csv already exist.
+
+    Used when a query times out mid-way: never raises, never blocks the
+    error-handling path.
+    """
+    try:
+        if game_config is not None:
+            name_enrich.translate_dir(result_dir, game_config)
+        _send_charts(client, chat_id, result_dir, step_labels=step_labels)
+        _send_text(client, chat_id, note)
+        _send_result_file(client, chat_id, result_dir, conclusions=[note])
+    except Exception as e:
+        print(f"[bot] send partial results failed: {e}", flush=True)
+
+
 def _handle_simple(client, chat_id, user_id, message_id, text, opgames, game_config, ws):
     """Process a simple query through a single Claude CLI call."""
     t0 = time.time()
@@ -287,11 +317,18 @@ def _handle_simple(client, chat_id, user_id, message_id, text, opgames, game_con
         msg = str(e)
         latency = int((time.time() - t0) * 1000)
         if "超时" in msg:
-            reply = "查询超时，请简化问题后重试"
+            if _query_csv_snapshot(ws["result_dir"]):
+                # 子进程超时但已查到部分数据：把已获得的结果返回，不让用户一无所获
+                _send_partial_results(
+                    client, chat_id, ws["result_dir"], game_config,
+                    "查询超时，以下为已获取的部分结果（明细见附件）：",
+                )
+            else:
+                _send_text(client, chat_id, "查询超时，请简化问题后重试")
         else:
             detail = msg[:300].replace('\n', ' ')
             reply = f"处理失败：{detail}"
-        _send_text(client, chat_id, reply)
+            _send_text(client, chat_id, reply)
         store.log_out(chat_id, message_id, "error", latency, error=msg)
     except ValueError as e:
         latency = int((time.time() - t0) * 1000)
@@ -307,25 +344,60 @@ def _handle_simple(client, chat_id, user_id, message_id, text, opgames, game_con
             _active_chats.discard(chat_id)
 
 
-def _run_planned_body(client, chat_id, message_id, text, ws):
-    """Plan first, then execute. Returns (summaries, final_summary, steps)."""
-    plan_obj = query_planner.plan(text, ws)
-    summaries = []
-    for i, step in enumerate(plan_obj.steps, start=1):
-        summary = query_planner.execute_step(step, i, len(plan_obj.steps), ws, summaries)
+def _execute_steps(client, chat_id, text, ws, steps):
+    """Execute planned steps one by one, tolerating per-step failures.
+
+    A step that raises (e.g. claude 子进程超时) is marked failed and the
+    remaining steps continue — 已完成的步骤结果不再被整体丢弃。
+
+    Returns (summaries, step_csvs, failed):
+      summaries[i] — 第 i 步中文总结；失败时为带标记的说明
+      step_csvs[i] — 第 i 步实际产生的 query_*.csv 文件名列表（按编号排序）
+      failed       — 失败步骤的下标集合（0-based）
+    """
+    summaries, step_csvs, failed = [], [], set()
+    total = len(steps)
+    for i, step in enumerate(steps, start=1):
+        before = _query_csv_snapshot(ws["result_dir"])
+        try:
+            summary = query_planner.execute_step(step, i, total, ws, summaries)
+        except Exception as e:
+            failed.add(i - 1)
+            summary = f"（本步查询失败：{str(e)[:120]}）"
+            try:
+                if client is not None:
+                    _send_text(client, chat_id,
+                               f"⚠️ 第{i}/{total}步（{step.goal}）执行失败：{str(e)[:80]}，继续执行剩余步骤…")
+            except Exception:
+                pass
+        after = _query_csv_snapshot(ws["result_dir"])
+        step_csvs.append(sorted(after - before, key=_csv_sort_key))
         summaries.append(summary)
-    final_summary = query_planner.summarize(text, ws, summaries)
-    return summaries, final_summary, plan_obj.steps
+    return summaries, step_csvs, failed
+
+
+def _safe_summarize(text, ws, summaries, step_csvs):
+    """LLM 最终总结；失败时兜底，绝不让已获得的各步结果丢失。"""
+    try:
+        return query_planner.summarize(text, ws, summaries, step_csvs=step_csvs)
+    except Exception as e:
+        print(f"[bot] summarize failed: {e}", flush=True)
+        return "（最终总结生成失败，以上为各步实际查询结果，明细见附件）"
+
+
+def _run_planned_body(client, chat_id, message_id, text, ws):
+    """Plan first, then execute. Returns (summaries, final_summary, steps, step_csvs, failed)."""
+    plan_obj = query_planner.plan(text, ws)
+    summaries, step_csvs, failed = _execute_steps(client, chat_id, text, ws, plan_obj.steps)
+    final_summary = "" if len(failed) == len(plan_obj.steps) else _safe_summarize(text, ws, summaries, step_csvs)
+    return summaries, final_summary, plan_obj.steps, step_csvs, failed
 
 
 def _run_planned_with_steps_body(client, chat_id, message_id, text, ws, steps):
-    """Execute analyzer-provided steps. Returns (summaries, final_summary)."""
-    summaries = []
-    for i, step in enumerate(steps, start=1):
-        summary = query_planner.execute_step(step, i, len(steps), ws, summaries)
-        summaries.append(summary)
-    final_summary = query_planner.summarize(text, ws, summaries)
-    return summaries, final_summary
+    """Execute analyzer-provided steps. Returns (summaries, final_summary, step_csvs, failed)."""
+    summaries, step_csvs, failed = _execute_steps(client, chat_id, text, ws, steps)
+    final_summary = "" if len(failed) == len(steps) else _safe_summarize(text, ws, summaries, step_csvs)
+    return summaries, final_summary, step_csvs, failed
 
 
 def _planned_handler(client, chat_id, user_id, message_id, text, opgames, game_config, ws, steps=None):
@@ -334,16 +406,29 @@ def _planned_handler(client, chat_id, user_id, message_id, text, opgames, game_c
     try:
         _send_text(client, chat_id, "🔎 该问题较复杂，正在分步查询，请稍候…")
         if steps is not None:
-            summaries, final_summary = _run_planned_with_steps_body(client, chat_id, message_id, text, ws, steps)
+            summaries, final_summary, step_csvs, failed = _run_planned_with_steps_body(client, chat_id, message_id, text, ws, steps)
         else:
-            summaries, final_summary, steps = _run_planned_body(client, chat_id, message_id, text, ws)
-        step_labels = [s.goal for s in steps]
-        answer = "\n".join(f"第{i}步：{s}" for i, s in enumerate(summaries, start=1)) + "\n\n【总结】\n" + final_summary
+            summaries, final_summary, steps, step_csvs, failed = _run_planned_body(client, chat_id, message_id, text, ws)
+        answer = "\n".join(f"第{i}步：{s}" for i, s in enumerate(summaries, start=1))
+        if final_summary:
+            answer += "\n\n【总结】\n" + final_summary
+        if len(failed) == len(steps):
+            # 所有步骤都失败：只回报失败原因，不发送空附件
+            _send_text(client, chat_id, answer + "\n\n所有步骤均未成功，请简化问题后重试")
+            latency = int((time.time() - t0) * 1000)
+            store.log_out(chat_id, message_id, "error", latency, error="all steps failed")
+            return
+        if failed:
+            answer += f"\n\n⚠️ 其中 {len(failed)} 步未成功，以上为已完成步骤的部分结果"
+        # 失败步骤不产生 CSV，后续 CSV 编号前移：标签/结论必须按"每步实际产出的
+        # CSV"对齐，而不是按步骤下标对齐
+        csv_labels = [steps[i].goal for i, csvs in enumerate(step_csvs) for _ in csvs]
+        csv_conclusions = [summaries[i] for i, csvs in enumerate(step_csvs) for _ in csvs]
         name_enrich.translate_dir(ws["result_dir"], game_config)
-        _send_charts(client, chat_id, ws["result_dir"], step_labels=step_labels)
+        _send_charts(client, chat_id, ws["result_dir"], step_labels=csv_labels)
         _send_text(client, chat_id, answer)
         _send_result_file(client, chat_id, ws["result_dir"],
-                          conclusions=summaries, final_summary=final_summary)
+                          conclusions=csv_conclusions, final_summary=final_summary or None)
         _send_query_summary(client, chat_id, message_id)
         latency = int((time.time() - t0) * 1000)
         store.log_out(chat_id, message_id, "ok", latency)

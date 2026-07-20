@@ -69,6 +69,7 @@ _STEP_SYSTEM_PROMPT_TEMPLATE = """\
 4. 付费用户/目标用户列表必须先由前一步提供（CSV 或前一步结果），禁止在当前 SQL 里用 `role_id IN (SELECT role_id FROM 大表)` 这类子查询去扫描整张表
 5. 如果需要用目标用户列表过滤，先读取 results/query_*.csv 里的 role_id 列，生成带 LIMIT 的显式列表或临时结果，再执行当前查询
 6. 如果工具列表里暂时没有 query_data（MCP server 异步加载中），先调用 WaitForMcpServers 等待 dquery 连接，最多重试 3 次；确认仍不可用再在总结中如实说明，不要用 Bash 或其他工具绕过
+7. 如果 query_data 报"数仓任务超时"或"SQL 执行超时"类错误，禁止原样重试：必须缩小 ds 范围或增加过滤条件（如 b_type、显式 role_id 列表）后再试，最多重试 1 次；仍超时则放弃该表，在总结中如实说明"该表数据量过大、查询超时"，不要卡住反复尝试
 
 要求：
 1. 用 query_data 工具执行一个 SQL 查询
@@ -254,20 +255,34 @@ def _read_csv_preview(path: Path, limit: int = 20) -> str:
     return "\n".join(lines)
 
 
-def _build_step_summaries(result_dir: str, summaries: List[str]) -> str:
-    """Combine step summaries with CSV previews for the final summary prompt."""
+def _build_step_summaries(result_dir: str, summaries: List[str], step_csvs: Optional[List[List[str]]] = None) -> str:
+    """Combine step summaries with CSV previews for the final summary prompt.
+
+    step_csvs: 每步实际产生的 query_*.csv 文件名列表（调用方按步快照 result_dir
+    得到）。缺省时退回旧约定——第 i 步对应 query_i.csv（仅在所有步骤都成功且
+    每步恰好一次查询时成立；中间步骤失败会让后续 CSV 编号前移、映射错位）。
+    """
     result_dir = Path(result_dir)
     parts = []
     for i, summary in enumerate(summaries, start=1):
-        csv_path = result_dir / f"query_{i}.csv"
-        preview = _read_csv_preview(csv_path)
-        parts.append(f"## 第{i}步\n总结：{summary}\n数据：\n{preview}")
+        if step_csvs is not None:
+            names = step_csvs[i - 1] if i - 1 < len(step_csvs) else []
+            if names:
+                data_block = "\n".join(_read_csv_preview(result_dir / name) for name in names)
+            else:
+                data_block = "(本步未产生数据文件)"
+        else:
+            data_block = _read_csv_preview(result_dir / f"query_{i}.csv")
+        parts.append(f"## 第{i}步\n总结：{summary}\n数据：\n{data_block}")
     return "\n\n".join(parts)
 
 
-def summarize(question: str, ws: dict, summaries: List[str]) -> str:
-    """Ask LLM to summarize all query_N.csv results."""
-    step_summaries = _build_step_summaries(ws["result_dir"], summaries)
+def summarize(question: str, ws: dict, summaries: List[str], step_csvs: Optional[List[List[str]]] = None) -> str:
+    """Ask LLM to summarize all query_N.csv results.
+
+    step_csvs: 每步实际产生的 CSV 文件名列表，用于把各步总结与正确的数据文件对齐。
+    """
+    step_summaries = _build_step_summaries(ws["result_dir"], summaries, step_csvs=step_csvs)
     system_prompt = _SUMMARY_SYSTEM_PROMPT_TEMPLATE.format(step_summaries=step_summaries)
     answer, _ = claude_cli.run_with_system_prompt(question, ws, system_prompt)
     return answer

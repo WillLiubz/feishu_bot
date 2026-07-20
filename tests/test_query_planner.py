@@ -151,3 +151,26 @@ def test_build_step_summaries(tmp_path):
     assert "第1步" in text
     assert "第一步总结" in text
     assert "共 1 行" in text
+
+
+def test_build_step_summaries_with_step_csvs_mapping(tmp_path):
+    """中间步骤失败后 CSV 编号前移：按 step_csvs 归属对齐，不按步骤下标猜。"""
+    result_dir = tmp_path / "results"
+    result_dir.mkdir()
+    (result_dir / "query_1.csv").write_text("a,b\n1,2\n", encoding="utf-8-sig")
+    summaries = ["第一步总结", "（本步查询失败：处理超时）", "第三步总结"]
+    # 第2步失败无 CSV；query_1.csv 实际属于第3步
+    step_csvs = [[], [], ["query_1.csv"]]
+    text = query_planner._build_step_summaries(str(result_dir), summaries, step_csvs=step_csvs)
+    sections = text.split("## 第")
+    assert "(本步未产生数据文件)" in sections[1]  # 第1步
+    assert "(本步未产生数据文件)" in sections[2]  # 第2步（失败）
+    assert "共 1 行" in sections[3]               # 第3步拿到 query_1.csv
+
+
+def test_step_prompt_forbids_blind_retry_on_timeout():
+    """步骤提示词必须包含"数仓超时禁止原样重试"规则。"""
+    prompt = query_planner._STEP_SYSTEM_PROMPT_TEMPLATE
+    assert "数仓任务超时" in prompt
+    assert "禁止原样重试" in prompt
+    assert "最多重试 1 次" in prompt
