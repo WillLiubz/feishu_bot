@@ -60,13 +60,19 @@ log_160_<Action>
 | ver | string | SDK 版本 |
 | op_id | int | 运营商 ID |
 | opgame_id | int | 渠道 ID（server_id 前 4 位） |
-| server_id | int | 服务器 ID |
+| server_id | string | 服务器 ID（**VARCHAR**，见下方警告） |
 | createtime | string | 事件时间 yyyy-MM-dd HH:mm:ss |
 | micro | int | 微客户端类型 |
 | gtasdk | int | GTA SDK 标识 |
 | timestamp | int | Unix 时间戳（秒），日志写入时追加 |
 
 > 注：后端 `Base` 本身不携带 `ds` 与 `game_id`，这两列由下游 ETL 在入库/映射 Presto 视图时补充。
+
+> **⚠ 性能警告（2026-07 实测）**：`server_id` 在 Presto 中是 **VARCHAR**。过滤时必须加引号写 `server_id IN ('2251312168','2251312169')`；写不加引号的整数比较（`server_id = 2251312168`）会导致整列隐式 CAST、阻断谓词下推，单天查询也会超过 6 分钟超时（加引号后 7 天扫描仅 ~5 秒）。`game_id = 160` 为整数比较，不受影响。
+>
+> **⚠ `rolereg.role_id` 为空字符串**：`v_presto_log_rolereg` 的 `role_id` 字段实测为空，统计注册人数请用 `COUNT(DISTINCT account)`（平台账号），不要用 `COUNT(DISTINCT role_id)`。
+>
+> **⚠ 数值字段脏数据**：`pay_money` / `pay_diamond` / `consume_diamond` / `consume_blackdiamond` / `role_level` 等字段建议一律 `TRY_CAST` + `COALESCE`（如 `SUM(COALESCE(TRY_CAST(pay_money AS DOUBLE), 0))`），直接 `CAST` 遇脏数据会导致整查询失败。
 
 ---
 
@@ -210,11 +216,11 @@ log_160_<Action>
 | role_vip | int | VIP |
 | role_regtime | string | 注册时间 |
 | role_paid | int | 是否付费 |
-| pay_type | int | 充值类型（1=购买钻石，2=购买商品） |
+| pay_type | int | 充值类型。**实测恒为 1**（源码 `vip.go` 两处 `PayRechargeLog` 均传 `PAY_RECHARGE_BUY_DIAMOND`），文档标注的 1=购买钻石/2=购买商品并不生效，**不要用 `pay_type = 2` 查直购**（结果恒为 0） |
 | pay_orderid | string | 订单号 |
 | pay_discount | string | 折扣率（当前固定 `"1"`） |
 | pay_way | string | 支付方式（当前固定 `"0"`） |
-| pay_itemid | string | 购买商品 ID |
+| pay_itemid | string | 充值/直购标识：**普通充值 = `'0'`；直购 = `'actId:giftId'`**。⚠ 源码 `fmt.Sprintf` 参数类型错误，数仓中实际为 `'%!d(string=3:8001)'` 形态，解析需剥前缀/后缀：`replace(split_part(pay_itemid,':',1), '%!d(string=', '')` 取 actId，`replace(split_part(pay_itemid,':',2), ')', '')` 取 giftId。actId 枚举见源码 `game.pb.go` `DIRECT_TYPE`（1=活动直购、2=商店直购、3=新月卡、4=周年新通行证、5=周年新加油站、6=基金新通行证、7=刮刮卡、8=代金券、9=自定义礼包、10=王之财宝、11=渔场通行证）。查直购用 `strpos(pay_itemid, ':') > 0` |
 | pay_money | double | 充值金额 |
 | pay_currency | string | 货币类型 |
 | pay_diamond | int | 购得钻石数 |
@@ -1155,7 +1161,7 @@ LIMIT 200
 ### 输出 Sheet
 
 1. **概览**：三群人数、付费金额、ARPU、ARPPU。
-2. **付费玩家付费点**：按 `pay_itemid` + `pay_type` 汇总充值金额、次数、客单价。
+2. **付费玩家付费点**：按 `pay_itemid` 汇总充值金额、次数、客单价（`pay_type` 恒为 1，无区分意义；普通充值 `pay_itemid='0'`，直购为 `'actId:giftId'`，详见 payrecharge 表字段说明）。
 3. **付费玩家玩法参与**：基于 `gamelog_raw.v_presto_log_bhbehavior`，对比付费玩家与全量活跃玩家的 `b_id` 行为参与率。
 4. **沉默玩家现状**：沉默玩家在分析窗口内的 `b_id` 行为参与、沉默窗付费。
 5. **免费玩家行为**：免费玩家的 `b_id` 行为参与、平均活跃天数、等级/VIP 分布。

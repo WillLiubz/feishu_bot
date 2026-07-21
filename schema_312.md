@@ -24,7 +24,7 @@
 
 **重要**：`game_id` 在 ECO 表里为 **字符串** `'312'`，在 KPI 表里为 **整数** `312`，写 SQL 需注意。
 
-**重要**：ECO 表（gameeco_raw/odl）的 `role_id` 为 **VARCHAR 字符串**，不是数字。按 role_id 过滤时必须写 `CAST(role_id AS VARCHAR) = '123456'`，不能写 `role_id = 123456`（整数比较会全表扫描，极慢）。
+**重要**：ECO 表（gameeco_raw/odl）的 `role_id` 为 **VARCHAR 字符串**，不是数字。按 role_id 过滤时直接写 `role_id = '123456'`（字面量加引号），不能写 `role_id = 123456`（整数比较会全表扫描，极慢），也不需要 `CAST(role_id AS VARCHAR)`（列本身就是 VARCHAR，包 CAST 只会阻断谓词下推）。
 
 ---
 
@@ -47,6 +47,22 @@
 
 **过滤测试服**：`AND SUBSTR(CAST(server_id AS VARCHAR), 5, 1) != '4'`
 
+> **⚠ 性能警告（2026-07 实测）**：Presto 中字面量类型必须与列类型**精确匹配**，跨类型比较（varchar 列 vs 数字字面量，或 int 列 vs 字符串字面量）都会触发整列隐式 CAST、阻断谓词下推，单天查询也会超过 6 分钟超时（修正后月级扫描仅 ~5 秒）。实测各列真实类型（与本文档表格中的标注可能不一致，以实测为准）：
+>
+> | 列 | gamelog_raw | gameeco_raw |
+> |---|---|---|
+> | `server_id` | **VARCHAR**（必须加引号 `'1448311610'`） | **VARCHAR**（必须加引号） |
+> | `game_id` | int（`312`） | VARCHAR（`'312'`） |
+> | `role_type` | int（`role_type = 1`，**不可**加引号） | int（不可加引号） |
+> | `res_id` / `change_type`（roleres） | — | **VARCHAR**（必须加引号 `'2'`） |
+> | `pay_type`（payrecharge） | VARCHAR（值恒为 `'1'`，见 payrecharge 表字段说明） | — |
+>
+> **⚠ `rolereg.role_id` 为空字符串**：`v_presto_log_rolereg` 的 `role_id` 字段实测为空，统计注册人数请用 `COUNT(DISTINCT account)`。
+>
+> **⚠ `payrecharge.pay_money` 币种为 USD**：本文档此前标注"人民币元"，实测 `pay_currency` 全部为 `USD`，金额应按美元解读。
+>
+> **⚠ 数值字段建议 `TRY_CAST` + `COALESCE`**（如 `SUM(COALESCE(TRY_CAST(pay_money AS DOUBLE), 0))`），直接 `CAST` 遇脏数据会导致整查询失败。
+
 ---
 
 ### 通用 ECO 基础字段（所有 gameeco 表均包含）
@@ -68,7 +84,7 @@
 | account | string | 账号 |
 | account_regtime | int | 账号注册时间（Unix 秒） |
 | client_ip | string | 客户端 IP |
-| role_id | bigint | 角色 ID（全服唯一） |
+| role_id | string | 角色 ID（全服唯一，VARCHAR；过滤时字面量必须加引号） |
 | role_name | string | 角色名 |
 | role_regtime | int | 角色注册时间（Unix 秒） |
 | role_career | int | 职业 |
@@ -115,7 +131,7 @@
 
 ### gamelog_raw.v_presto_log_payrecharge — 充值流水（实时 T+0）
 
-每笔充值一条。`pay_money` 单位为人民币元。
+每笔充值一条。`pay_money` 单位为**美元**（2026-07 实测 `pay_currency` 全部为 `USD`；此前标注"人民币元"有误）。
 
 | 额外字段 | 类型 | 说明 |
 |---|---|---|
@@ -128,11 +144,11 @@
 | role_vip | int | VIP |
 | role_regtime | string | 注册时间 |
 | role_paid | int | 是否付费 |
-| pay_type | int | 充值类型（1=购买钻石，2=购买商品） |
+| pay_type | int | 充值类型。**实测恒为 1**（源码 `game_log.go` 的 `Log_payRecharge` 硬编码 `pay_type = 1`），文档标注的 1=购买钻石/2=购买商品并不生效，**不要用 `pay_type = '2'` 查直购**（结果恒为 0） |
 | pay_orderid | string | 订单号 |
 | pay_discount | float | 折扣率 |
 | pay_way | int | 支付方式 |
-| pay_itemid | string | 购买商品 ID |
+| pay_itemid | string | 充值/直购标识：**普通充值 = `'0'`；直购 = `'activityId:giftId'`**（如 `'14:501001'` 为新手直购商品 501001）。activityId 枚举见源码 `const.pb.go` `DIRECT_PURCHASE_ACT_ID`（6=商店-自动、7=商店-普通、8=商店-节日、9=天使通行证、13=新月卡、14=新手直购、15=女神市场、19=自选礼包、20=代金券商店、34=女神新市场等）。查直购用 `strpos(pay_itemid, ':') > 0`，拆分用 `split_part(pay_itemid, ':', 1/2)` |
 | pay_money | double | 充值金额（元） |
 | pay_currency | string | 货币类型 |
 | pay_diamond | bigint | 购得钻石数 |
@@ -1190,7 +1206,7 @@ SELECT ds, b_type, b_value, b_id, zone_id, rank_before, rank_after, team_power, 
 FROM gameeco_raw.v_presto_log_rolebehavior
 WHERE game_id = '312'
 AND ds >= '<7天前ds>'
-AND CAST(role_id AS VARCHAR) = '<角色ID>'
+AND role_id = '<角色ID>'
 ORDER BY createtime_local
 LIMIT 200
 ```
