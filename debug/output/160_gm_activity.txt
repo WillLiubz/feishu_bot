@@ -1,0 +1,58 @@
+=== DESC activity ===
+id int(11) unsigned
+name text
+game_id int(11) unsigned
+tpl_id int(11)
+activity_type tinyint(1)
+reward_type tinyint(1)
+type_value varchar(20)
+type_times tinyint(3) unsigned
+activity_group_id int(11) unsigned
+title_pic varchar(100)
+title_small_pic varchar(100)
+url_type tinyint(1)
+target_id varchar(200)
+button_pic varchar(200)
+start_time varchar(20)
+end_time varchar(20)
+start_get_time varchar(20)
+end_get_time varchar(20)
+desc_info text
+hot char(5)
+sort mediumint(9)
+status tinyint(1) unsigned
+created_by varchar(50)
+modify_by varchar(100)
+activity_enter_name text
+activity_args varchar(100)
+ad_small_pic varchar(100)
+ad_large_pic varchar(100)
+reward_ids varchar(1000)
+panel_stime varchar(20)
+panel_etime varchar(20)
+pictures text
+notice_position int(255)
+start_level varchar(50)
+activity_enter_icon_pic varchar(100)
+end_level varchar(50)
+vip_start_level varchar(50)
+vip_end_level varchar(50)
+goods_list varchar(255)
+func_content varchar(255)
+item_list varchar(255)
+item_param varchar(255)
+act_link varchar(255)
+remarks text
+activity_kind varchar(255)
+
+=== 2026-05/06 活动(按类型+名称聚合, 前80组) ===
+共 0 组
+
+=== DESC game_mall ===
+id int(11)
+name varchar(255)
+description varchar(255)
+game_id int(11)
+ident varchar(255)
+
+=== game_mall 样例 ===

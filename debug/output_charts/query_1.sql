@@ -1,0 +1,1 @@
+SELECT ds, money FROM raw_scribe_log.pay

@@ -1,0 +1,1 @@
+SELECT channel, money FROM gamelog_raw.v_presto_log_payrecharge

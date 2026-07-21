@@ -1,0 +1,1 @@
+SELECT item_name, cnt FROM gameeco_raw.v_presto_log_roleitem

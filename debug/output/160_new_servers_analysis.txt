@@ -1,0 +1,17 @@
+[query] 姣忔棩娉ㄥ唽 ...
+Traceback (most recent call last):
+  File "C:\Users\liubz\Desktop\mycode\feishu_bot\debug\analyze_160_new_servers.py", line 67, in <module>
+    daily_reg = run(
+                ^^^^
+  File "C:\Users\liubz\Desktop\mycode\feishu_bot\debug\analyze_160_new_servers.py", line 54, in run
+    return dataapi.run_sql_rows(sql, max_rows=max_rows)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\liubz\Desktop\mycode\feishu_bot\app\dataapi.py", line 131, in run_sql_rows
+    return _execute()
+           ^^^^^^^^^^
+  File "C:\Users\liubz\Desktop\mycode\feishu_bot\app\dataapi.py", line 128, in _execute
+    return _download_rows(task_id, max_rows)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\liubz\Desktop\mycode\feishu_bot\app\dataapi.py", line 105, in _download_rows
+    raise RuntimeError(f"数仓任务超时未完成 (task_id={task_id}，已等待 {elapsed_sec} 秒)")
+RuntimeError: 数仓任务超时未完成 (task_id=58cda7e0-1b1e-4e82-8952-422427fddac0，已等待 357 秒)
