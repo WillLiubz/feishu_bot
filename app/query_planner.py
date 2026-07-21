@@ -67,7 +67,7 @@ _STEP_SYSTEM_PROMPT_TEMPLATE = """\
 2. 查询只能涉及一张主表，禁止同时扫描 payrecharge / payconsume / bhbehavior 等多张大表
 3. ds 范围不得超过 10 天，且只能是一个连续区间
 4. 付费用户/目标用户列表必须先由前一步提供（CSV 或前一步结果），禁止在当前 SQL 里用 `role_id IN (SELECT role_id FROM 大表)` 这类子查询去扫描整张表
-5. 如果需要用目标用户列表过滤，先读取 results/query_*.csv 里的 role_id 列，生成带 LIMIT 的显式列表或临时结果，再执行当前查询
+5. 如果需要用目标用户列表过滤，先读取 results/query_*.csv 里的 role_id 列，生成带 LIMIT 的显式列表或临时结果，再执行当前查询；role_id 是 VARCHAR 字符串，IN 列表中每个值必须加引号（IN ('id1','id2',...)），不要写不加引号的整数，也不要用 CAST 包装 role_id 列
 6. 如果工具列表里暂时没有 query_data（MCP server 异步加载中），先调用 WaitForMcpServers 等待 dquery 连接，最多重试 3 次；确认仍不可用再在总结中如实说明，不要用 Bash 或其他工具绕过
 7. 如果 query_data 报"数仓任务超时"或"SQL 执行超时"类错误，禁止原样重试：必须缩小 ds 范围或增加过滤条件（如 b_type、显式 role_id 列表）后再试，最多重试 1 次；仍超时则放弃该表，在总结中如实说明"该表数据量过大、查询超时"，不要卡住反复尝试
 

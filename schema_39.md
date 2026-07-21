@@ -29,7 +29,7 @@ SELECT ... FROM raw_scribe_log.<behavior> WHERE gameid = '39' AND ds = '<日期>
 | `39_sub` | `raw_scribe_log.sub` | GM / 后台扣币 | `Logger::logExchangeCost()` → `Tracer::cash_tracer` (6) amount<0 且 source=`api.addGoodsAction` |
 | `39_ser` | `raw_scribe_log.ser` | 在线人数 / PCU | `UserCommon::getOnlineNum()` → `Tracer::user_online_tracer` (1016) |
 
-> `raw_scribe_log` 是**多游戏共用库**，所有查询必须带 `game_id = 39`。`gameid` 列来自原始消息，`game_id` 列由 ETL 补充；实际样本中两者一致，建议用 `game_id` 过滤。
+> `raw_scribe_log` 是**多游戏共用库**，所有查询必须带游戏过滤。`gameid` 列来自原始消息（字符串分区字段），`game_id` 列由 ETL 补充；**必须写 `gameid = '39'`**，写 `game_id = 39` 会全表扫描导致超时。
 
 ---
 
@@ -64,7 +64,7 @@ SELECT ... FROM raw_scribe_log.<behavior> WHERE gameid = '39' AND ds = '<日期>
 | `sdk_version` | string | SDK 版本 |
 | `debug` | string | 调试信息 |
 | `ds` | string | 分区日期 yyyyMMdd |
-| `game_id` | int | ETL 补充的游戏 ID，过滤用 `game_id = 39` |
+| `game_id` | int | ETL 补充的游戏 ID（仅供参考；过滤请用字符串分区字段 `gameid = '39'`） |
 
 > 时间字段：`timestamp` 是 Unix 秒；按天统计用分区字段 `ds`（yyyyMMdd）。
 > 玩家标识：`iuid` 是玩家内部唯一 ID，`ouid` 是平台账号。按玩家分析时通常用 `iuid`。
@@ -442,8 +442,8 @@ WHERE gameid = '39'
 
 1. **库名固定为 `raw_scribe_log`**：不要写成 `gamelog_raw`、`gamelog_odl`、`gameeco_raw` 等 312/160 项目的库名。
 2. **表名就是 behavior**：`raw_scribe_log.login`、`raw_scribe_log.pay`、`raw_scribe_log.prop` 等。
-3. **所有查询必须带 `game_id = 39`**：`raw_scribe_log` 是多游戏共享库，不带会查到其他游戏数据。
-4. **玩家标识**：按玩家分析用 `iuid`；`ouid` 是平台账号/通行证。
+3. **所有查询必须带 `gameid = '39'`（字符串，加引号）**：`raw_scribe_log` 是多游戏共享库，不带会查到其他游戏数据；写 `game_id = 39` 会全表扫描导致超时。
+4. **玩家标识**：按玩家分析用 `iuid`；`ouid` 是平台账号/通行证。两者都是字符串，过滤时必须加引号（`iuid = '123456'` / `IN ('id1','id2',...)`），不要写不加引号的整数比较。
 5. **数值字段都是 string**：`custom_pra*`、`user_level`、`moneycoin` 等在 Presto 中都是 VARCHAR，求和/排序时必须 `CAST(... AS BIGINT)` 或 `CAST(... AS DOUBLE)`。
 6. **时间字段**：`timestamp` 是 Unix 秒 BIGINT；按天过滤用 `ds`（yyyyMMdd）。
 7. **测试服过滤**：代码层没有统一测试服丢弃逻辑；`is_test` 字段含义待确认。建议按 `operatorid`/`platform` 或 `serverid` 与运营侧确认测试服范围。

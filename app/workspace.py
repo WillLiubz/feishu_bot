@@ -53,12 +53,13 @@ _DEFAULT_GAME_RULES = """\
     - roleitem: gameeco_raw.v_presto_log_roleitem
     - roleres: gameeco_raw.v_presto_log_roleres
     - rolebehavior: gameeco_raw.v_presto_log_rolebehavior
-    - 这些表的 role_id 是 BIGINT，与 VARCHAR 字段比较时必须 CAST(role_id AS VARCHAR)
+    - role_id 过滤的字面量类型必须与列类型一致（见本游戏 schema 文档）：游戏 312/160 的所有表 role_id 均为 VARCHAR，比较时直接加引号写 role_id = '123456' 或 IN ('id1','id2',...)；写不加引号的整数比较会导致全表扫描、必超时
+    - 不要用 CAST(role_id AS VARCHAR) 包装列：列本身是 VARCHAR 时 CAST 是多余的，且把列包进表达式会阻断谓词下推；正确做法是给字面量加引号
     - game_id 在 ECO 表中是字符串（如 '312'），比较时直接写 game_id = '312'
-17. 付费表 gamelog_raw.v_presto_log_payrecharge 的 role_id 通常也是 BIGINT，用 CAST(role_id AS VARCHAR) IN (...) 过滤
+17. 付费表 gamelog_raw.v_presto_log_payrecharge 的 role_id 也是 VARCHAR，用 role_id IN ('id1','id2',...) 过滤（每个值加引号）
 18. 月度排行榜玩家充值类问题必须拆成两步：
     - 第1步：从 gameeco_raw.v_presto_log_rolebehavior 查 b_type='MonthRank'，获取 role_id 列表
-    - 第2步：用 CAST(role_id AS VARCHAR) IN (...) 去 gamelog_raw.v_presto_log_payrecharge 查充值
+    - 第2步：用 role_id IN ('id1','id2',...)（每个值加引号）去 gamelog_raw.v_presto_log_payrecharge 查充值
 """
 
 _GAME_SPECIFIC_RULES = {
@@ -73,7 +74,7 @@ _GAME_SPECIFIC_RULES = {
     - 在线人数/PCU：`raw_scribe_log.ser`
     字段含义参考 schema_39.md。
 16. **过滤游戏必须用字符串 `gameid = '39'`，绝对不要写 `game_id = 39`**；`game_id` 列虽然存在但会让 Presto 全表扫描，导致超时。
-17. 玩家唯一标识用 `iuid`（内部 uid），平台账号用 `ouid`。按玩家关联时用 `iuid`。
+17. 玩家唯一标识用 `iuid`（内部 uid），平台账号用 `ouid`。按玩家关联时用 `iuid`。`iuid`/`ouid` 都是字符串，过滤时必须加引号写 `iuid = '123456'` 或 `IN ('id1','id2',...)`，不要写不加引号的整数比较。
 18. `raw_scribe_log.pay.custom_pra3` 是**充值获得的游戏币/钻石数量**（字符串，需 CAST）。回答任何游戏 39 的付费/充值问题时，**默认以美元为最终单位**，钻石数仅作为辅助参考；换算公式：`美元金额 = ROUND(CAST(custom_pra3 AS DOUBLE) / 100, 2)`（即 100 钻石 = 1 美元）。付费类型在 `custom_pra1`（`1`=兑换游戏币，`2`=直购道具）。
 19. 系统参与/消费行为查 `raw_scribe_log.prop` 的 `custom_pra1`（来源 class.method，如 `UserLevy.levy`）和 `custom_pra3`（数量）。
 20. 不要使用 `gameeco_raw`、`gamelog_raw.v_presto_log_*` 等 312/160 项目的表名来查询游戏 39。
