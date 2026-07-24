@@ -21,6 +21,7 @@ import dquery
 import names
 import query_analyzer
 import query_planner
+import report_insight
 import reports
 import store
 import workspace
@@ -486,8 +487,19 @@ def _handle_report(client, chat_id, message_id, report_type, text, game_config):
         _send_text(client, chat_id, "📊 正在生成固定报表，请稍候…")
         summary, file_or_dir = reports.run(report_type, text, game_config=game_config)
         if file_or_dir and os.path.isdir(file_or_dir):
-            # 多步报表（如玩家分层）：与 LLM 查询一致，图 → 文字 → 文件
+            # 多步报表（如玩家分层/付费构成）：与 LLM 查询一致，翻译 → 图 → 文字 → 文件
+            if game_config is not None:
+                name_enrich.translate_dir(file_or_dir, game_config)
             _send_charts(client, chat_id, file_or_dir)
+            if report_type == "pay_activity":
+                insight = ""
+                try:
+                    ws = workspace.prepare(chat_id, message_id, game_config=game_config)
+                    insight = report_insight.interpret(text, file_or_dir, ws)
+                except Exception as e:
+                    print(f"[bot] report insight failed: {e}", flush=True)
+                if insight:
+                    summary = summary + "\n\n【经营解读】\n" + insight
             _send_text(client, chat_id, summary)
             _send_result_file(client, chat_id, file_or_dir, conclusions=[summary])
         elif file_or_dir:
