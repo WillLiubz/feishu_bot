@@ -1,0 +1,109 @@
+{
+  "name": "pay_activity",
+  "description": "312付费构成与活动分析：付费概览、普通充值vs直购、充值档位、美元分层、分层×活动参与、活动总览、分层×道具产销",
+  "summary_template": "【付费构成与活动分析】游戏 {game_id}，分析窗口 {analysis_start}~{analysis_end}",
+  "default_params": {
+    "analysis_window_days": 1
+  },
+  "games": {
+    "312": {
+      "overview": {
+        "name": "付费概览",
+        "max_rows": 10,
+        "sql": "WITH pay AS (\n  SELECT COUNT(DISTINCT role_id) AS payer_count,\n         COUNT(*) AS pay_times,\n         SUM(COALESCE(TRY_CAST(pay_money AS DOUBLE), 0)) AS revenue\n  FROM gamelog_raw.v_presto_log_payrecharge\n  WHERE game_id = {game_id}\n    AND ds BETWEEN '{analysis_start}' AND '{analysis_end}'\n    {server_filter}\n),\ndau AS (\n  SELECT COUNT(DISTINCT role_id) AS dau\n  FROM gamelog_raw.v_presto_log_rolelogin\n  WHERE game_id = {game_id}\n    AND ds BETWEEN '{analysis_start}' AND '{analysis_end}'\n    {server_filter}\n)\nSELECT\n  d.dau,\n  p.payer_count,\n  ROUND(p.revenue, 2) AS revenue_usd,\n  p.pay_times,\n  ROUND(CAST(p.payer_count AS DOUBLE) / NULLIF(d.dau, 0) * 100, 2) AS pay_rate_pct,\n  ROUND(p.revenue / NULLIF(p.payer_count, 0), 2) AS arppu,\n  ROUND(CAST(p.pay_times AS DOUBLE) / NULLIF(p.payer_count, 0), 2) AS avg_pay_times\nFROM pay p CROSS JOIN dau d",
+        "columns": {
+          "dau": "DAU",
+          "payer_count": "付费人数",
+          "revenue_usd": "收入(USD)",
+          "pay_times": "付费次数",
+          "pay_rate_pct": "付费率(%)",
+          "arppu": "ARPPU",
+          "avg_pay_times": "人均付费次数"
+        }
+      },
+      "pay_composition": {
+        "name": "付费构成",
+        "max_rows": 100,
+        "sql": "SELECT\n  CASE WHEN strpos(pay_itemid, ':') > 0 THEN '直购' ELSE '普通充值' END AS pay_kind,\n  CASE WHEN strpos(pay_itemid, ':') > 0 THEN split_part(pay_itemid, ':', 1) ELSE '' END AS act_id,\n  COUNT(DISTINCT role_id) AS payer_count,\n  COUNT(*) AS pay_times,\n  ROUND(SUM(COALESCE(TRY_CAST(pay_money AS DOUBLE), 0)), 2) AS pay_amount,\n  ROUND(SUM(COALESCE(TRY_CAST(pay_money AS DOUBLE), 0)) * 100.0\n        / NULLIF(SUM(SUM(COALESCE(TRY_CAST(pay_money AS DOUBLE), 0))) OVER (), 0), 2) AS amount_pct\nFROM gamelog_raw.v_presto_log_payrecharge\nWHERE game_id = {game_id}\n  AND ds BETWEEN '{analysis_start}' AND '{analysis_end}'\n  {server_filter}\nGROUP BY 1, 2\nORDER BY pay_amount DESC",
+        "columns": {
+          "pay_kind": "充值类型",
+          "act_id": "直购活动",
+          "payer_count": "付费人数",
+          "pay_times": "付费次数",
+          "pay_amount": "金额(USD)",
+          "amount_pct": "金额占比(%)"
+        },
+        "value_map": {
+          "act_id": {
+            "14": "14-新手直购",
+            "13": "13-新月卡",
+            "9": "9-天使通行证",
+            "7": "7-商店",
+            "8": "8-商店"
+          }
+        }
+      },
+      "pay_tiers": {
+        "name": "充值档位分布",
+        "max_rows": 20,
+        "sql": "WITH t AS (\n  SELECT role_id, COALESCE(TRY_CAST(pay_money AS DOUBLE), 0) AS amt\n  FROM gamelog_raw.v_presto_log_payrecharge\n  WHERE game_id = {game_id}\n    AND ds BETWEEN '{analysis_start}' AND '{analysis_end}'\n    {server_filter}\n)\nSELECT\n  CASE\n    WHEN amt < 1 THEN '<$1'\n    WHEN amt < 5 THEN '$1~5'\n    WHEN amt < 10 THEN '$5~10'\n    WHEN amt < 20 THEN '$10~20'\n    WHEN amt < 50 THEN '$20~50'\n    WHEN amt < 100 THEN '$50~100'\n    ELSE '>=$100'\n  END AS price_tier,\n  COUNT(*) AS pay_times,\n  COUNT(DISTINCT role_id) AS payer_count,\n  ROUND(SUM(amt), 2) AS pay_amount\nFROM t\nGROUP BY 1\nORDER BY MIN(amt)",
+        "columns": {
+          "price_tier": "单笔档位",
+          "pay_times": "笔数",
+          "payer_count": "付费人数",
+          "pay_amount": "金额(USD)"
+        }
+      },
+      "payer_segments": {
+        "name": "付费用户分层",
+        "max_rows": 20,
+        "sql": "WITH per_role AS (\n  SELECT role_id, SUM(COALESCE(TRY_CAST(pay_money AS DOUBLE), 0)) AS total\n  FROM gamelog_raw.v_presto_log_payrecharge\n  WHERE game_id = {game_id}\n    AND ds BETWEEN '{analysis_start}' AND '{analysis_end}'\n    {server_filter}\n  GROUP BY role_id\n),\nseg AS (\n  SELECT\n    CASE\n      WHEN total < 10 THEN 1 WHEN total < 20 THEN 2 WHEN total < 40 THEN 3\n      WHEN total < 80 THEN 4 WHEN total < 100 THEN 5 WHEN total < 150 THEN 6\n      WHEN total < 200 THEN 7 WHEN total < 300 THEN 8 ELSE 9\n    END AS seg_no,\n    total\n  FROM per_role\n)\nSELECT\n  seg_no,\n  CASE seg_no\n    WHEN 1 THEN '<$10' WHEN 2 THEN '$10~20' WHEN 3 THEN '$20~40'\n    WHEN 4 THEN '$40~80' WHEN 5 THEN '$80~100' WHEN 6 THEN '$100~150'\n    WHEN 7 THEN '$150~200' WHEN 8 THEN '$200~300' ELSE '>=$300'\n  END AS segment,\n  COUNT(*) AS user_count,\n  ROUND(SUM(total), 2) AS pay_amount,\n  ROUND(SUM(total) * 100.0 / NULLIF(SUM(SUM(total)) OVER (), 0), 2) AS amount_pct,\n  ROUND(SUM(total) / COUNT(*), 2) AS arppu\nFROM seg\nGROUP BY seg_no\nORDER BY seg_no",
+        "columns": {
+          "seg_no": "分层编号",
+          "segment": "分层",
+          "user_count": "人数",
+          "pay_amount": "金额(USD)",
+          "amount_pct": "金额占比(%)",
+          "arppu": "层内ARPPU"
+        }
+      },
+      "segment_activity": {
+        "name": "分层×活动参与",
+        "max_rows": 1000,
+        "sql": "WITH per_role AS (\n  SELECT role_id, SUM(COALESCE(TRY_CAST(pay_money AS DOUBLE), 0)) AS total\n  FROM gamelog_raw.v_presto_log_payrecharge\n  WHERE game_id = {game_id}\n    AND ds BETWEEN '{analysis_start}' AND '{analysis_end}'\n    {server_filter}\n  GROUP BY role_id\n),\nseg AS (\n  SELECT role_id,\n    CASE\n      WHEN total < 10 THEN 1 WHEN total < 20 THEN 2 WHEN total < 40 THEN 3\n      WHEN total < 80 THEN 4 WHEN total < 100 THEN 5 WHEN total < 150 THEN 6\n      WHEN total < 200 THEN 7 WHEN total < 300 THEN 8 ELSE 9\n    END AS seg_no\n  FROM per_role\n),\npromo AS (\n  SELECT COALESCE(json_extract_scalar(activity_topic, '$.cn'), activity_topic) AS topic_cn,\n         role_id\n  FROM gameeco_raw.v_presto_log_rolepromo\n  WHERE game_id = '{game_id_str}'\n    AND ds BETWEEN '{analysis_start}' AND '{analysis_end}'\n    AND role_type = 1\n    {server_filter}\n)\nSELECT\n  s.seg_no,\n  CASE s.seg_no\n    WHEN 1 THEN '<$10' WHEN 2 THEN '$10~20' WHEN 3 THEN '$20~40'\n    WHEN 4 THEN '$40~80' WHEN 5 THEN '$80~100' WHEN 6 THEN '$100~150'\n    WHEN 7 THEN '$150~200' WHEN 8 THEN '$200~300' ELSE '>=$300'\n  END AS segment,\n  p.topic_cn AS activity_topic,\n  COUNT(DISTINCT p.role_id) AS user_count,\n  COUNT(*) AS event_count\nFROM promo p\nJOIN seg s ON p.role_id = s.role_id\nGROUP BY s.seg_no, p.topic_cn\nORDER BY s.seg_no, user_count DESC",
+        "columns": {
+          "seg_no": "分层编号",
+          "segment": "分层",
+          "activity_topic": "活动主题",
+          "user_count": "参与人数",
+          "event_count": "参与次数"
+        }
+      },
+      "activity_overview": {
+        "name": "活动总览",
+        "max_rows": 200,
+        "sql": "SELECT\n  COALESCE(json_extract_scalar(activity_topic, '$.cn'), activity_topic) AS activity_topic,\n  COUNT(DISTINCT role_id) AS user_count,\n  COUNT(*) AS event_count\nFROM gameeco_raw.v_presto_log_rolepromo\nWHERE game_id = '{game_id_str}'\n  AND ds BETWEEN '{analysis_start}' AND '{analysis_end}'\n  AND role_type = 1\n  {server_filter}\nGROUP BY COALESCE(json_extract_scalar(activity_topic, '$.cn'), activity_topic)\nORDER BY user_count DESC\nLIMIT 100",
+        "columns": {
+          "activity_topic": "活动主题",
+          "user_count": "参与人数",
+          "event_count": "参与次数"
+        }
+      },
+      "segment_item_flow": {
+        "name": "分层×道具产销",
+        "max_rows": 5000,
+        "sql": "WITH per_role AS (\n  SELECT role_id, SUM(COALESCE(TRY_CAST(pay_money AS DOUBLE), 0)) AS total\n  FROM gamelog_raw.v_presto_log_payrecharge\n  WHERE game_id = {game_id}\n    AND ds BETWEEN '{analysis_start}' AND '{analysis_end}'\n    {server_filter}\n  GROUP BY role_id\n),\nseg AS (\n  SELECT role_id,\n    CASE\n      WHEN total < 10 THEN 1 WHEN total < 20 THEN 2 WHEN total < 40 THEN 3\n      WHEN total < 80 THEN 4 WHEN total < 100 THEN 5 WHEN total < 150 THEN 6\n      WHEN total < 200 THEN 7 WHEN total < 300 THEN 8 ELSE 9\n    END AS seg_no\n  FROM per_role\n)\nSELECT\n  s.seg_no,\n  CASE s.seg_no\n    WHEN 1 THEN '<$10' WHEN 2 THEN '$10~20' WHEN 3 THEN '$20~40'\n    WHEN 4 THEN '$40~80' WHEN 5 THEN '$80~100' WHEN 6 THEN '$100~150'\n    WHEN 7 THEN '$150~200' WHEN 8 THEN '$200~300' ELSE '>=$300'\n  END AS segment,\n  CASE r.change_type WHEN '1' THEN '产出' WHEN '2' THEN '消耗' ELSE r.change_type END AS direction,\n  r.item_id,\n  r.item_name,\n  COUNT(DISTINCT r.role_id) AS user_count,\n  COUNT(*) AS event_count,\n  SUM(ABS(CAST(r.status_after AS BIGINT) - CAST(r.status_before AS BIGINT))) AS amount\nFROM gameeco_raw.v_presto_log_roleitem r\nJOIN seg s ON r.role_id = s.role_id\nWHERE r.game_id = '{game_id_str}'\n  AND r.ds BETWEEN '{analysis_start}' AND '{analysis_end}'\n  AND r.role_type = 1\n  AND SUBSTR(CAST(r.server_id AS VARCHAR), 5, 1) != '4'\nGROUP BY s.seg_no, r.change_type, r.item_id, r.item_name\nORDER BY s.seg_no, direction, amount DESC",
+        "columns": {
+          "seg_no": "分层编号",
+          "segment": "分层",
+          "direction": "方向",
+          "item_id": "道具ID",
+          "item_name": "道具名称",
+          "user_count": "涉及人数",
+          "event_count": "变动次数",
+          "amount": "数量"
+        }
+      }
+    }
+  }
+}
