@@ -80,8 +80,8 @@ def test_item_flow_sheet_caps_per_segment(template):
     若整体按分层升序排序，高付费分层（大 R）会完全不可见。"""
     sql = template["games"]["312"]["segment_item_flow"]["sql"]
     assert "ROW_NUMBER() OVER (PARTITION BY seg_no, direction ORDER BY amount DESC)" in sql
-    assert "rn <= 30" in sql
-    assert "ORDER BY seg_no, direction, amount DESC" in sql
+    assert "rn <= 20" in sql
+    assert "ORDER BY seg_no DESC, direction, amount DESC" in sql
 
 
 def test_run_report_pay_activity_summary(monkeypatch, template):
