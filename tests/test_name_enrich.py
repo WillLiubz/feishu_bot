@@ -129,3 +129,51 @@ def test_translate_dir_only_touches_query_csvs(monkeypatch, tmp_path):
     assert n == 1
     assert "道具名称" in _read_csv(tmp_path / "query_1.csv")[0]
     assert "道具名称" not in _read_csv(tmp_path / "other.csv")[0]
+
+
+def test_translate_312_chinese_header(monkeypatch, tmp_path):
+    calls = []
+
+    def fake_query(cfg, sql, max_rows=500, *, database=None):
+        calls.append(sql)
+        return [{"ident": "2014003", "name": "屠龙刀"}]
+
+    monkeypatch.setattr(name_enrich.configdb, "query", fake_query)
+    p = tmp_path / "query_5.csv"
+    _write_csv(p, ["分层", "道具ID", "数量"], [["<$10", "2014003", "5"]])
+    assert name_enrich.translate_csv(str(p), _gc(312)) is True
+    rows = _read_csv(p)
+    assert list(rows[0].keys()) == ["分层", "道具ID", "道具名称", "数量"]
+    assert rows[0]["道具名称"] == "屠龙刀"
+    assert "game_item" in calls[0] and "game_id = 312" in calls[0]
+
+
+def test_translate_312_fallback_game_resource(monkeypatch, tmp_path):
+    calls = []
+
+    def fake_query(cfg, sql, max_rows=500, *, database=None):
+        calls.append(sql)
+        if "game_item" in sql:
+            return []  # 道具表未命中
+        return [{"id_name": "261", "name": "钻石"}]
+
+    monkeypatch.setattr(name_enrich.configdb, "query", fake_query)
+    p = tmp_path / "query_6.csv"
+    _write_csv(p, ["item_id", "amount"], [["261", "100"]])
+    assert name_enrich.translate_csv(str(p), _gc(312)) is True
+    rows = _read_csv(p)
+    assert rows[0]["道具名称"] == "钻石"
+    assert any("game_resource" in s and "id_name" in s for s in calls)
+
+
+def test_translate_312_fallback_failure_silent(monkeypatch, tmp_path):
+    def fake_query(cfg, sql, max_rows=500, *, database=None):
+        if "game_resource" in sql:
+            raise RuntimeError("db down")
+        return []
+
+    monkeypatch.setattr(name_enrich.configdb, "query", fake_query)
+    p = tmp_path / "query_6.csv"
+    _write_csv(p, ["item_id", "amount"], [["999", "1"]])
+    # 不抛异常；主表与 fallback 都未命中时无改动
+    assert name_enrich.translate_csv(str(p), _gc(312)) is False

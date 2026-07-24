@@ -37,9 +37,11 @@ _COLUMN_RULES = {
          "quote": True},
     ],
     312: [
-        {"cols": ["item_id", "ident"], "db": "gm", "table": "game_item", "key": "ident",
+        {"cols": ["item_id", "ident", "道具ID"], "db": "gm", "table": "game_item", "key": "ident",
          "where": "game_id = 312", "new_col": "道具名称", "existing": ("item_name", "道具名称"),
-         "quote": True},
+         "quote": True,
+         "fallback": {"db": "gm", "table": "game_resource", "key": "id_name",
+                      "where": "game_id = 312", "quote": True}},
         {"cols": ["id_name"], "db": "gm", "table": "game_resource", "key": "id_name",
          "where": "game_id = 312", "new_col": "资源名称", "existing": ("资源名称",),
          "quote": True},
@@ -112,6 +114,12 @@ def translate_csv(csv_path, game_config) -> bool:
         if any(a in fieldnames for a in rule["existing"]):
             continue
         mapping = _fetch_names(game_config.game_id, cfg, rule, [r.get(col, "") for r in rows])
+        fb = rule.get("fallback")
+        if fb:
+            missing_ids = [i for i, n in mapping.items() if not n]
+            if missing_ids:
+                fb_map = _fetch_names(game_config.game_id, cfg, fb, missing_ids)
+                mapping.update({k: v for k, v in fb_map.items() if v})
         if not any(mapping.values()):
             continue
         fieldnames.insert(fieldnames.index(col) + 1, rule["new_col"])
