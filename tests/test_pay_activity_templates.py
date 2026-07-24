@@ -92,6 +92,33 @@ def test_run_report_pay_activity_summary(monkeypatch, template):
     assert result_dir.split("/")[-1].split("\\")[-1].startswith("pay_activity_")
 
 
+def test_pay_composition_value_map_pipeline(monkeypatch):
+    """管线级：Sheet2 直购活动列走完 columns 改名 + value_map 映射后应显示
+    映射文案（如 14-新手直购），而非原始数字 actId。
+
+    引擎在 app/templates/__init__.py 中先按 columns 把英文列名改成中文，
+    再在改名后的行上按 value_map 的键查列，因此 value_map 的键必须是
+    中文列名（直购活动），否则永远匹配不上、显示原始数字。
+    """
+    row = {
+        "pay_kind": "直购",
+        "act_id": "14",
+        "payer_count": "5",
+        "pay_times": "7",
+        "pay_amount": "99.0",
+        "amount_pct": "100.0",
+    }
+    monkeypatch.setattr(templates.dataapi, "run_sql_rows", lambda sql, max_rows=None: [dict(row)])
+    _, result_dir = templates.run_report("pay_activity", "昨天付费构成", _GameConfig(312))
+    csv2 = Path(result_dir) / "query_2.csv"
+    content = csv2.read_text(encoding="utf-8")
+    assert "直购活动" in content
+    assert "14-新手直购" in content
+    # 映射后的单元格不应保留裸数字 actId（排除列名行中的数字场景）。
+    data_line = content.splitlines()[-1]
+    assert "14-新手直购" in data_line
+
+
 def test_match_pay_activity_trigger(monkeypatch):
     import config
     import reports
