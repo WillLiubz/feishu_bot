@@ -1,6 +1,7 @@
 {
   "name": "player_segment",
   "description": "玩家分群行为分析模板：付费玩家付费点、玩法参与、沉默玩家现状、免费玩家行为、Top 明细",
+  "summary_template": "【玩家分群分析】游戏 {game_id}，分析窗口 {analysis_start}~{analysis_end}，沉默窗口 {silent_start}~{silent_end}",
   "default_params": {
     "analysis_window_days": 7,
     "silent_window_days": 30,

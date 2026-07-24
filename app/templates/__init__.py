@@ -174,7 +174,7 @@ def run_report(template_name: str, question: str, game_config) -> tuple[str, str
 
     # Prepare result directory.
     import tempfile
-    result_dir = Path(tempfile.mkdtemp(prefix="player_segment_"))
+    result_dir = Path(tempfile.mkdtemp(prefix=f"{template_name}_"))
 
     sheet_names = []
     for idx, (sheet_key, sheet_def) in enumerate(game_sheets.items(), start=1):
@@ -204,10 +204,12 @@ def run_report(template_name: str, question: str, game_config) -> tuple[str, str
         sql_path.write_text(sql, encoding="utf-8")
         sheet_names.append(sheet_def.get("name", sheet_key))
 
-    summary = (
-        f"【玩家分群分析】游戏 {game_config.game_id}，"
-        f"分析窗口 {params['analysis_start']}~{params['analysis_end']}，"
-        f"沉默窗口 {params['silent_start']}~{params['silent_end']}\n"
-        f"共 {len(sheet_names)} 个 Sheet：{', '.join(sheet_names)}"
+    fmt = {**params, "template_name": template_name, "game_id": game_config.game_id}
+    summary_template = template.get(
+        "summary_template",
+        "【{template_name}】游戏 {game_id}，分析窗口 {analysis_start}~{analysis_end}",
+    )
+    summary = summary_template.format(**fmt) + (
+        f"\n共 {len(sheet_names)} 个 Sheet：{', '.join(sheet_names)}"
     )
     return summary, str(result_dir)
