@@ -258,6 +258,7 @@ app/                # 主应用代码
   configdb.py       # 静态配置 MySQL 库只读护栏与查询执行
   query_planner.py  # 复杂查询自动拆分
   reports.py        # 固定报表（KPI / LTV / 月度充值榜等）
+  report_insight.py # 固定报表 LLM 经营解读
   workspace.py      # 为每次对话生成 Claude 工作区/规则
   dataapi.py        # 异步 Presto 数据仓库 API 封装
   sqlguard.py       # SQL 权限/安全校验
@@ -285,6 +286,7 @@ run_bot.bat         # Windows 启动脚本
   ```
 - **MCP server 子进程**：子 Claude CLI 只暴露 `mcp__dquery__query_data`，禁用其他工具（见 `.claude/settings.json`）。
 - **复杂查询**：`query_planner.is_complex()` 命中时，自动拆分为最多 5 步，每步一次 Claude CLI 调用，结果保存为 `results/query_N.csv`，最后合并为 `result.xlsx`。
+- **pay_activity 报表**：312 专用付费构成+活动分析（触发词：付费构成/活动付费分析/付费活动分析/付费分层），模板 `app/templates/pay_activity.json`。
 - **库选择**：默认 KPI/日志用 `gamelog_raw`；ECO 流水/行为/道具表用 `gameeco_raw`；游戏 39 统一使用 `raw_scribe_log`；只有用户明确要求 T+1/odl 时才用 `gamelog_odl`。
 - **敏感信息**：`config.json` 已加入 `.gitignore`，不得提交。
 

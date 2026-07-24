@@ -913,6 +913,12 @@ LIMIT 20
 | money | bigint | 变动后金币余额 |
 | customized | string | 扩展 |
 
+> **实测补充（2026-07-24，pay_activity 探针确认）**：
+> - `change_type` 为 **varchar**：`'1'`=产出 / `'2'`=消耗，过滤必须加引号。
+> - `status_before` / `status_after` 为 **varchar**：聚合必须显式 `CAST(... AS BIGINT)`（隐式算术在 1600 万行/天上超 6 分钟跑不完，显式 CAST 约 5 秒）。单日变动量 = `SUM(ABS(CAST(status_after AS BIGINT) - CAST(status_before AS BIGINT)))`。
+> - `game_id` / `role_id` 为 varchar。
+> - `item_name` 实测**恒为空串**（2026-07-23 全量 1660 万行 GROUP BY 仅 1 个空值分组）：道具中文名必须靠 `name_enrich` 查配置库 `game_item` / `game_resource` 补齐，不能依赖本表自带名称。
+
 ---
 
 ### gameeco_raw.v_presto_log_roleres — 资源产销流水
@@ -1000,6 +1006,13 @@ LIMIT 20
 | activity_pay | int | 是否充值活动 |
 | enter_level | string | 可参与等级范围 |
 | enter_vip | string | 可参与 VIP 范围 |
+
+> **实测补充（2026-07-24，pay_activity 探针+源码确认）**：
+> - `item_spend` / `item_get` 恒为空：唯一调用点 `module_activity.go:2293` 硬编码传 `""`；2026-07 全月 170 万+ 行无一非空。**不要用这两个字段统计消耗/产出**（道具产销走 `v_presto_log_roleitem`）。
+> - `activity_special` / `activity_pay` 同处硬编码 `1` / `0`，不能作为精彩/付费活动标记。
+> - `activity_topic` 为多语言 JSON 字符串，中文名用 `json_extract_scalar(activity_topic, '$.cn')` 提取（示例："女神通行证升级福利"、"买一送一送豪礼"、"大亨积分奖励"、"王的财宝限定礼包"、"女神新集市购买礼包"）。
+> - `game_id` / `role_id` 为 varchar；`role_type` 为 integer（过滤真实玩家加 `role_type = 1`）。
+> - 该表记录的是"领取活动奖励"事件（`handle_ActivityFinish`）。
 
 ---
 

@@ -397,3 +397,68 @@ def test_handle_simple_timeout_without_results_keeps_old_message(tmp_path):
     msp.assert_not_called()
     sent = "\n".join(c.args[2] for c in mst.call_args_list)
     assert "查询超时，请简化问题后重试" in sent
+
+
+def test_handle_report_pay_activity_enriches_and_interprets(monkeypatch, tmp_path):
+    import threading
+    from unittest.mock import MagicMock
+
+    import bot
+
+    sent_texts = []
+    translated = []
+    monkeypatch.setattr(bot.reports, "run",
+                        lambda rt, text, game_config=None: ("数据概览", str(tmp_path)))
+    monkeypatch.setattr(bot.name_enrich, "translate_dir",
+                        lambda d, gc: translated.append(d) or 1)
+    monkeypatch.setattr(bot, "_send_charts", lambda *a, **k: None)
+    monkeypatch.setattr(bot, "_send_text", lambda c, cid, t: sent_texts.append(t))
+    monkeypatch.setattr(bot, "_send_result_file", lambda *a, **k: None)
+    monkeypatch.setattr(bot.store, "log_out", lambda *a, **k: None)
+    monkeypatch.setattr(bot.workspace, "prepare",
+                        lambda *a, **k: {"cwd": str(tmp_path), "mcp_config": "m",
+                                         "result_dir": str(tmp_path)})
+    monkeypatch.setattr(bot.report_insight, "interpret", lambda q, d, ws: "解读文本")
+    monkeypatch.setattr(bot, "_query_sem", threading.Semaphore(1))
+    bot._query_sem.acquire()  # _handle_report 的 finally 会 release
+
+    bot._handle_report(None, "oc_chat", "om_msg", "pay_activity", "付费构成",
+                       MagicMock(game_id=312))
+
+    assert translated == [str(tmp_path)]
+    full = "\n".join(sent_texts)
+    assert "数据概览" in full
+    assert "【经营解读】" in full and "解读文本" in full
+
+
+def test_handle_report_pay_activity_insight_failure_still_sends(monkeypatch, tmp_path):
+    import threading
+    from unittest.mock import MagicMock
+
+    import bot
+
+    sent_texts = []
+    monkeypatch.setattr(bot.reports, "run",
+                        lambda rt, text, game_config=None: ("数据概览", str(tmp_path)))
+    monkeypatch.setattr(bot.name_enrich, "translate_dir", lambda d, gc: 0)
+    monkeypatch.setattr(bot, "_send_charts", lambda *a, **k: None)
+    monkeypatch.setattr(bot, "_send_text", lambda c, cid, t: sent_texts.append(t))
+    monkeypatch.setattr(bot, "_send_result_file", lambda *a, **k: None)
+    monkeypatch.setattr(bot.store, "log_out", lambda *a, **k: None)
+    monkeypatch.setattr(bot.workspace, "prepare",
+                        lambda *a, **k: {"cwd": str(tmp_path), "mcp_config": "m",
+                                         "result_dir": str(tmp_path)})
+
+    def boom(q, d, ws):
+        raise RuntimeError("处理超时")
+
+    monkeypatch.setattr(bot.report_insight, "interpret", boom)
+    monkeypatch.setattr(bot, "_query_sem", threading.Semaphore(1))
+    bot._query_sem.acquire()
+
+    bot._handle_report(None, "oc_chat", "om_msg", "pay_activity", "付费构成",
+                       MagicMock(game_id=312))
+
+    full = "\n".join(sent_texts)
+    assert "数据概览" in full
+    assert "【经营解读】" not in full

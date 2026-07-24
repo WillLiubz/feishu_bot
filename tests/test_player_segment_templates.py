@@ -144,3 +144,15 @@ def test_column_mapping_renames_output(template):
         assert "充值金额" in csv_text
     finally:
         dataapi.run_sql_rows = original_run_sql_rows
+
+
+def test_run_report_summary_and_dir_prefix(monkeypatch, tmp_path):
+    """run_report 的 summary 由模板 summary_template 驱动，目录前缀=模板名。"""
+    monkeypatch.setattr(templates.dataapi, "run_sql_rows", lambda sql, max_rows=None: [])
+    summary, result_dir = templates.run_report(
+        "player_segment", "近7天玩家分群", _GameConfig(312)
+    )
+    assert "【玩家分群分析】游戏 312" in summary
+    assert "分析窗口" in summary and "沉默窗口" in summary
+    assert "共 6 个 Sheet" in summary
+    assert result_dir.split("/")[-1].split("\\")[-1].startswith("player_segment_")

@@ -335,6 +335,17 @@ def player_segment_report(question, game_config=None):
 
 
 # ---------------------------------------------------------------------------
+# Pay composition & activity analysis report
+# ---------------------------------------------------------------------------
+
+def pay_activity_report(question, game_config=None):
+    """Run pay composition & activity analysis report. Returns (summary, result_dir)."""
+    if game_config is None:
+        game_config = config.game_config()
+    return templates.run_report("pay_activity", question, game_config=game_config)
+
+
+# ---------------------------------------------------------------------------
 # Dispatch
 # ---------------------------------------------------------------------------
 
@@ -350,4 +361,6 @@ def run(report_type, question, game_config=None):
         return month_rank_pay(question, game_config=game_config)
     if report_type == "player_segment":
         return player_segment_report(question, game_config=game_config)
+    if report_type == "pay_activity":
+        return pay_activity_report(question, game_config=game_config)
     raise ValueError(f"未知报表类型: {report_type}")
