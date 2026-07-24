@@ -81,3 +81,28 @@ def test_run_report_pay_activity_summary(monkeypatch, template):
     assert "【付费构成与活动分析】游戏 312" in summary
     assert "共 7 个 Sheet" in summary
     assert result_dir.split("/")[-1].split("\\")[-1].startswith("pay_activity_")
+
+
+def test_match_pay_activity_trigger(monkeypatch):
+    import config
+    import reports
+
+    monkeypatch.setattr(config, "REPORT_TRIGGERS", {
+        "player_segment": ["玩家分群", "付费点分析"],
+        "pay_activity": ["付费构成", "活动付费分析", "付费活动分析", "付费分层"],
+    })
+    assert reports.match("312昨日付费构成") == "pay_activity"
+    assert reports.match("看一下付费分层情况") == "pay_activity"
+    assert reports.match("付费点分析") == "player_segment"
+
+
+def test_run_dispatch_pay_activity(monkeypatch):
+    import reports
+
+    monkeypatch.setattr(
+        reports.templates, "run_report",
+        lambda name, q, game_config=None: (f"summary:{name}", "/tmp/x"),
+    )
+    summary, result_dir = reports.run("pay_activity", "付费构成", game_config=_GameConfig(312))
+    assert summary == "summary:pay_activity"
+    assert result_dir == "/tmp/x"
