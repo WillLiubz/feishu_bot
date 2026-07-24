@@ -49,7 +49,7 @@
 4. **付费用户分层**：按当日累计充值 9 档（<$10 / 10~20 / 20~40 / 40~80 / 80~100 / 100~150 / 150~200 / 200~300 / ≥$300）。
 5. **分层×活动参与**：分层 × 活动主题（`json_extract_scalar(activity_topic,'$.cn')`）的参与人数/次数（`rolepromo` 领奖记录）。
 6. **活动总览**：全量玩家当日全部活动主题，按参与人数排序。
-7. **分层×道具产销**：分层 × 产出/消耗 × 道具（`roleitem`，数量=变动前后差绝对值合计，表自带道具名称）。
+7. **分层×道具产销**：分层 × 产出/消耗 × 道具（`roleitem`，数量=变动前后差绝对值合计；每个分层×方向按数量取 Top 30，避免单日全量超 max_rows 截断后高付费分层不可见）。`roleitem.item_name` 实测恒为空，道具中文名由 `name_enrich.translate_dir` 查配置库 `game_item`/`game_resource` 补进"道具名称"列。
 
 口径：金额 USD；活动参与来自 `gameeco_raw.v_presto_log_rolepromo`（其 `item_spend`/`item_get` 源码硬编码恒空，不可用）；道具产销来自 `gameeco_raw.v_presto_log_roleitem`（`change_type` '1'=产出 / '2'=消耗，varchar 数值列必须显式 `CAST(... AS BIGINT)`）；全部活动纳入不过滤。
 触发词：`付费构成`、`活动付费分析`、`付费活动分析`、`付费分层`。

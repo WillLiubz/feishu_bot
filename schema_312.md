@@ -917,6 +917,7 @@ LIMIT 20
 > - `change_type` 为 **varchar**：`'1'`=产出 / `'2'`=消耗，过滤必须加引号。
 > - `status_before` / `status_after` 为 **varchar**：聚合必须显式 `CAST(... AS BIGINT)`（隐式算术在 1600 万行/天上超 6 分钟跑不完，显式 CAST 约 5 秒）。单日变动量 = `SUM(ABS(CAST(status_after AS BIGINT) - CAST(status_before AS BIGINT)))`。
 > - `game_id` / `role_id` 为 varchar。
+> - `item_name` 实测**恒为空串**（2026-07-23 全量 1660 万行 GROUP BY 仅 1 个空值分组）：道具中文名必须靠 `name_enrich` 查配置库 `game_item` / `game_resource` 补齐，不能依赖本表自带名称。
 
 ---
 

@@ -3,7 +3,7 @@
 在 query_N.csv 生成后、画图/合并 Excel 前调用：
 - 按 game_id 的内置规则识别 ID 列（item_id / activity_id / id_name 等）
 - 复用 configdb.query 批量 IN 查询静态配置库 / GM 运营库
-- 中文名列插在 ID 列右侧；已存在同义名列时跳过
+- 中文名列插在 ID 列右侧；已存在同义名列时不覆盖，仅补空单元格
 - 任何失败静默跳过（打印日志），绝不阻塞主流程
 """
 import csv
@@ -20,7 +20,7 @@ _NAME_CANDIDATES = ("name", "title", "activity_name")
 #   key:      表内主键列
 #   where:    额外过滤条件（如 game_id = 160），无则 None
 #   new_col:  插入的中文名列名
-#   existing: 已存在这些列时跳过翻译（避免覆盖 roleitem 自带的 item_name 等）
+#   existing: 已存在这些列时不覆盖已有值，仅补空单元格（如 roleitem 的 item_name 可能整列为空）
 _COLUMN_RULES = {
     39: [
         {"cols": ["item_id"], "db": "static", "table": "static_item", "key": "id",
@@ -111,7 +111,10 @@ def translate_csv(csv_path, game_config) -> bool:
         col = next((c for c in rule["cols"] if c in fieldnames), None)
         if not col:
             continue
-        if any(a in fieldnames for a in rule["existing"]):
+        # 已有同义名列时：全非空则跳过（不覆盖 roleitem 等自带名称）；
+        # 若有空单元格（如 312 roleitem 的 item_name 实测恒为空），只补空、不覆盖。
+        existing_col = next((a for a in rule["existing"] if a in fieldnames), None)
+        if existing_col and all(str(r.get(existing_col, "")).strip() for r in rows):
             continue
         mapping = _fetch_names(game_config.game_id, cfg, rule, [r.get(col, "") for r in rows])
         fb = rule.get("fallback")
@@ -121,6 +124,18 @@ def translate_csv(csv_path, game_config) -> bool:
                 fb_map = _fetch_names(game_config.game_id, cfg, fb, missing_ids)
                 mapping.update({k: v for k, v in fb_map.items() if v})
         if not any(mapping.values()):
+            continue
+        if existing_col:
+            filled = False
+            for r in rows:
+                if str(r.get(existing_col, "")).strip():
+                    continue
+                name = mapping.get(str(r.get(col, "")).strip(), "")
+                if name:
+                    r[existing_col] = name
+                    filled = True
+            if filled:
+                changed = True
             continue
         fieldnames.insert(fieldnames.index(col) + 1, rule["new_col"])
         for r in rows:

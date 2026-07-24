@@ -75,6 +75,15 @@ def test_item_flow_sheet_uses_explicit_cast(template):
     assert "change_type" in sql
 
 
+def test_item_flow_sheet_caps_per_segment(template):
+    """道具产销按 分层×方向 取 Top N：真实库单日全量超 5000 行会被 max_rows 截断，
+    若整体按分层升序排序，高付费分层（大 R）会完全不可见。"""
+    sql = template["games"]["312"]["segment_item_flow"]["sql"]
+    assert "ROW_NUMBER() OVER (PARTITION BY seg_no, direction ORDER BY amount DESC)" in sql
+    assert "rn <= 30" in sql
+    assert "ORDER BY seg_no, direction, amount DESC" in sql
+
+
 def test_run_report_pay_activity_summary(monkeypatch, template):
     monkeypatch.setattr(templates.dataapi, "run_sql_rows", lambda sql, max_rows=None: [])
     summary, result_dir = templates.run_report("pay_activity", "昨天付费构成", _GameConfig(312))

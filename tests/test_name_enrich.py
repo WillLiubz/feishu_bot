@@ -101,6 +101,42 @@ def test_skip_when_name_column_exists(monkeypatch, tmp_path):
     assert name_enrich.translate_csv(str(p), _gc(312)) is False
 
 
+def test_fill_empty_existing_name_column(monkeypatch, tmp_path):
+    """312 roleitem 的 item_name 实测恒空：已有空名称列时只补空、不覆盖。"""
+    calls = []
+
+    def fake_query(cfg, sql, max_rows=500, *, database=None):
+        calls.append(sql)
+        if "game_item" in sql:
+            return [{"ident": "2014003", "name": "屠龙刀"}]
+        return [{"id_name": "261", "name": "钻石"}]
+
+    monkeypatch.setattr(name_enrich.configdb, "query", fake_query)
+    p = tmp_path / "query_7.csv"
+    _write_csv(p, ["道具ID", "道具名称", "数量"],
+               [["2014003", "", "5"], ["261", "", "3"], ["999", "自带名", "1"]])
+    assert name_enrich.translate_csv(str(p), _gc(312)) is True
+    rows = _read_csv(p)
+    # 列结构不变（不插入新列）
+    assert list(rows[0].keys()) == ["道具ID", "道具名称", "数量"]
+    assert rows[0]["道具名称"] == "屠龙刀"      # game_item 命中
+    assert rows[1]["道具名称"] == "钻石"        # fallback game_resource 命中
+    assert rows[2]["道具名称"] == "自带名"      # 非空单元格不覆盖
+
+
+def test_empty_existing_name_column_all_unmatched(monkeypatch, tmp_path):
+    """已有名称列全空但配置库也查不到时，无改动、不报错。"""
+
+    def fake_query(cfg, sql, max_rows=500, *, database=None):
+        return []
+
+    monkeypatch.setattr(name_enrich.configdb, "query", fake_query)
+    p = tmp_path / "query_7.csv"
+    _write_csv(p, ["道具ID", "道具名称", "数量"], [["999", "", "1"]])
+    assert name_enrich.translate_csv(str(p), _gc(312)) is False
+    assert _read_csv(p)[0]["道具名称"] == ""
+
+
 def test_no_config_db_returns_false(tmp_path):
     p = tmp_path / "query_1.csv"
     _write_csv(p, ["item_id", "数量"], [["10010", "5"]])
