@@ -4,7 +4,7 @@
 
 **Goal:** 为游戏 312 新增固定报表 `pay_activity`：指定日期（默认昨日）的付费构成、付费用户美元分层、分层×活动参与的消耗/产出（道具名补全），并附 LLM 中文经营解读。
 
-**Architecture:** 与 `player_segment` 同构的 SQL 模板（`app/templates/pay_activity.json`，6 个 Sheet）+ `templates.run_report` 执行 → `name_enrich` 道具名翻译（增强：中文表头兼容 + game_resource fallback）→ `report_insight` 调子 Claude 生成经营解读（失败只丢文字）→ `bot._handle_report` 发送 Excel。
+**Architecture:** 与 `player_segment` 同构的 SQL 模板（`app/templates/pay_activity.json`，7 个 Sheet）+ `templates.run_report` 执行 → `name_enrich` 道具名翻译（增强：中文表头兼容 + game_resource fallback）→ `report_insight` 调子 Claude 生成经营解读（失败只丢文字）→ `bot._handle_report` 发送 Excel。
 
 **Tech Stack:** Python 3.12+ 标准库 + 现有 `dataapi` / `configdb` / `claude_cli` / pytest。无新依赖。
 
@@ -311,7 +311,7 @@ Co-Authored-By: Claude <noreply@anthropic.com>"
 
 ### Task 4: pay_activity 模板 JSON + 模板测试
 
-核心交付物。6 个 Sheet 的完整 SQL 如下；**若 Task 1 探针发现 `item_spend`/`item_get` 格式不是 `id:num;id:num`，先调整炸开写法再继续**（同步修改本任务 SQL 与 Task 8 的 schema 文档）。
+核心交付物。7 个 Sheet 的完整 SQL 如下。**口径已按 Task 1 探针 + 用户裁决修订**：rolepromo 的 `item_spend`/`item_get` 恒空（源码硬编码），活动 Sheet 只统计参与；消耗/产出走 `roleitem`（varchar 列必须显式 `CAST(... AS BIGINT)`）；`activity_topic` 用 `json_extract_scalar(..., '$.cn')` 取中文名。
 
 **Files:**
 - Create: `app/templates/pay_activity.json`
@@ -319,7 +319,7 @@ Co-Authored-By: Claude <noreply@anthropic.com>"
 
 **Interfaces:**
 - Consumes: `templates.compute_params` 占位符 `{game_id}` `{game_id_str}` `{analysis_start}` `{analysis_end}` `{server_filter}`；Task 2 的 `summary_template`。
-- Produces: 模板 `games.312` 的 6 个 Sheet，键固定为 `overview` / `pay_composition` / `pay_tiers` / `payer_segments` / `segment_activity` / `activity_overview`（Task 5/6/7 依赖此顺序与命名）。
+- Produces: 模板 `games.312` 的 7 个 Sheet，键固定为 `overview` / `pay_composition` / `pay_tiers` / `payer_segments` / `segment_activity` / `activity_overview` / `segment_item_flow`（Task 5/6/7 依赖此顺序与命名）。
 
 - [ ] **Step 1: 写失败测试**
 
@@ -386,17 +386,28 @@ def test_direct_purchase_split(template):
     assert "split_part(pay_itemid, ':', 1)" in sql
 
 
-def test_activity_sheets_explode_items(template):
+def test_activity_sheets_use_rolepromo_cn_topic(template):
+    """活动 Sheet 用 rolepromo 参与记录，主题取多语言 JSON 的 cn 字段。"""
     for key in ("segment_activity", "activity_overview"):
         sql = template["games"]["312"][key]["sql"]
-        assert "UNNEST" in sql and "item_spend" in sql and "item_get" in sql
+        assert "rolepromo" in sql
+        assert "json_extract_scalar" in sql and "'$.cn'" in sql
+
+
+def test_item_flow_sheet_uses_explicit_cast(template):
+    """道具产销 Sheet 走 roleitem，varchar 数值列必须显式 CAST。"""
+    sql = template["games"]["312"]["segment_item_flow"]["sql"]
+    assert "v_presto_log_roleitem" in sql
+    assert "CAST(r.status_after AS BIGINT)" in sql
+    assert "CAST(r.status_before AS BIGINT)" in sql
+    assert "change_type" in sql
 
 
 def test_run_report_pay_activity_summary(monkeypatch, template):
     monkeypatch.setattr(templates.dataapi, "run_sql_rows", lambda sql, max_rows=None: [])
     summary, result_dir = templates.run_report("pay_activity", "昨天付费构成", _GameConfig(312))
     assert "【付费构成与活动分析】游戏 312" in summary
-    assert "共 6 个 Sheet" in summary
+    assert "共 7 个 Sheet" in summary
     assert result_dir.split("/")[-1].split("\\")[-1].startswith("pay_activity_")
 ```
 
@@ -412,7 +423,7 @@ Create `app/templates/pay_activity.json`：
 ```json
 {
   "name": "pay_activity",
-  "description": "312付费构成与活动分析：付费概览、普通充值vs直购、充值档位、美元分层、分层×活动消耗产出、活动总览",
+  "description": "312付费构成与活动分析：付费概览、普通充值vs直购、充值档位、美元分层、分层×活动参与、活动总览、分层×道具产销",
   "summary_template": "【付费构成与活动分析】游戏 {game_id}，分析窗口 {analysis_start}~{analysis_end}",
   "default_params": {
     "analysis_window_days": 1
@@ -481,36 +492,39 @@ Create `app/templates/pay_activity.json`：
       },
       "segment_activity": {
         "name": "分层×活动参与",
-        "max_rows": 5000,
-        "sql": "WITH per_role AS (\n  SELECT role_id, SUM(COALESCE(TRY_CAST(pay_money AS DOUBLE), 0)) AS total\n  FROM gamelog_raw.v_presto_log_payrecharge\n  WHERE game_id = {game_id}\n    AND ds BETWEEN '{analysis_start}' AND '{analysis_end}'\n    {server_filter}\n  GROUP BY role_id\n),\nseg AS (\n  SELECT role_id,\n    CASE\n      WHEN total < 10 THEN 1 WHEN total < 20 THEN 2 WHEN total < 40 THEN 3\n      WHEN total < 80 THEN 4 WHEN total < 100 THEN 5 WHEN total < 150 THEN 6\n      WHEN total < 200 THEN 7 WHEN total < 300 THEN 8 ELSE 9\n    END AS seg_no\n  FROM per_role\n),\npromo AS (\n  SELECT activity_topic, role_id, item_spend, item_get\n  FROM gameeco_raw.v_presto_log_rolepromo\n  WHERE game_id = '{game_id_str}'\n    AND ds BETWEEN '{analysis_start}' AND '{analysis_end}'\n    {server_filter}\n),\njoined AS (\n  SELECT s.seg_no, p.activity_topic, p.role_id, p.item_spend, p.item_get\n  FROM promo p\n  JOIN seg s ON p.role_id = s.role_id\n),\nparticip AS (\n  SELECT seg_no, activity_topic,\n         COUNT(DISTINCT role_id) AS user_count,\n         COUNT(*) AS event_count\n  FROM joined\n  GROUP BY seg_no, activity_topic\n),\nitems AS (\n  SELECT seg_no, activity_topic, '消耗' AS direction,\n         split_part(pair, ':', 1) AS item_id,\n         SUM(COALESCE(TRY_CAST(split_part(pair, ':', 2) AS BIGINT), 0)) AS amount\n  FROM joined\n  CROSS JOIN UNNEST(split(COALESCE(item_spend, ''), ';')) AS t(pair)\n  WHERE pair <> ''\n  GROUP BY seg_no, activity_topic, split_part(pair, ':', 1)\n  UNION ALL\n  SELECT seg_no, activity_topic, '产出' AS direction,\n         split_part(pair, ':', 1) AS item_id,\n         SUM(COALESCE(TRY_CAST(split_part(pair, ':', 2) AS BIGINT), 0)) AS amount\n  FROM joined\n  CROSS JOIN UNNEST(split(COALESCE(item_get, ''), ';')) AS t(pair)\n  WHERE pair <> ''\n  GROUP BY seg_no, activity_topic, split_part(pair, ':', 1)\n)\nSELECT\n  pt.seg_no,\n  CASE pt.seg_no\n    WHEN 1 THEN '<$10' WHEN 2 THEN '$10~20' WHEN 3 THEN '$20~40'\n    WHEN 4 THEN '$40~80' WHEN 5 THEN '$80~100' WHEN 6 THEN '$100~150'\n    WHEN 7 THEN '$150~200' WHEN 8 THEN '$200~300' ELSE '>=$300'\n  END AS segment,\n  pt.activity_topic,\n  pt.user_count,\n  pt.event_count,\n  i.direction,\n  i.item_id,\n  i.amount\nFROM particip pt\nLEFT JOIN items i ON pt.seg_no = i.seg_no AND pt.activity_topic = i.activity_topic\nORDER BY pt.seg_no, pt.user_count DESC, i.direction, i.amount DESC",
+        "max_rows": 1000,
+        "sql": "WITH per_role AS (\n  SELECT role_id, SUM(COALESCE(TRY_CAST(pay_money AS DOUBLE), 0)) AS total\n  FROM gamelog_raw.v_presto_log_payrecharge\n  WHERE game_id = {game_id}\n    AND ds BETWEEN '{analysis_start}' AND '{analysis_end}'\n    {server_filter}\n  GROUP BY role_id\n),\nseg AS (\n  SELECT role_id,\n    CASE\n      WHEN total < 10 THEN 1 WHEN total < 20 THEN 2 WHEN total < 40 THEN 3\n      WHEN total < 80 THEN 4 WHEN total < 100 THEN 5 WHEN total < 150 THEN 6\n      WHEN total < 200 THEN 7 WHEN total < 300 THEN 8 ELSE 9\n    END AS seg_no\n  FROM per_role\n),\npromo AS (\n  SELECT COALESCE(json_extract_scalar(activity_topic, '$.cn'), activity_topic) AS topic_cn,\n         role_id\n  FROM gameeco_raw.v_presto_log_rolepromo\n  WHERE game_id = '{game_id_str}'\n    AND ds BETWEEN '{analysis_start}' AND '{analysis_end}'\n    AND role_type = 1\n    {server_filter}\n)\nSELECT\n  s.seg_no,\n  CASE s.seg_no\n    WHEN 1 THEN '<$10' WHEN 2 THEN '$10~20' WHEN 3 THEN '$20~40'\n    WHEN 4 THEN '$40~80' WHEN 5 THEN '$80~100' WHEN 6 THEN '$100~150'\n    WHEN 7 THEN '$150~200' WHEN 8 THEN '$200~300' ELSE '>=$300'\n  END AS segment,\n  p.topic_cn AS activity_topic,\n  COUNT(DISTINCT p.role_id) AS user_count,\n  COUNT(*) AS event_count\nFROM promo p\nJOIN seg s ON p.role_id = s.role_id\nGROUP BY s.seg_no, p.topic_cn\nORDER BY s.seg_no, user_count DESC",
         "columns": {
           "seg_no": "分层编号",
           "segment": "分层",
           "activity_topic": "活动主题",
           "user_count": "参与人数",
-          "event_count": "参与次数",
-          "direction": "方向",
-          "item_id": "道具ID",
-          "amount": "数量"
+          "event_count": "参与次数"
         }
       },
       "activity_overview": {
         "name": "活动总览",
-        "max_rows": 3000,
-        "sql": "WITH promo AS (\n  SELECT activity_topic, activity_special, activity_pay, role_id, item_spend, item_get\n  FROM gameeco_raw.v_presto_log_rolepromo\n  WHERE game_id = '{game_id_str}'\n    AND ds BETWEEN '{analysis_start}' AND '{analysis_end}'\n    {server_filter}\n),\nparticip AS (\n  SELECT activity_topic,\n         MAX(activity_special) AS is_special,\n         MAX(activity_pay) AS is_pay,\n         COUNT(DISTINCT role_id) AS user_count,\n         COUNT(*) AS event_count\n  FROM promo\n  GROUP BY activity_topic\n),\nitems AS (\n  SELECT activity_topic, '消耗' AS direction,\n         split_part(pair, ':', 1) AS item_id,\n         SUM(COALESCE(TRY_CAST(split_part(pair, ':', 2) AS BIGINT), 0)) AS amount\n  FROM promo\n  CROSS JOIN UNNEST(split(COALESCE(item_spend, ''), ';')) AS t(pair)\n  WHERE pair <> ''\n  GROUP BY activity_topic, split_part(pair, ':', 1)\n  UNION ALL\n  SELECT activity_topic, '产出' AS direction,\n         split_part(pair, ':', 1) AS item_id,\n         SUM(COALESCE(TRY_CAST(split_part(pair, ':', 2) AS BIGINT), 0)) AS amount\n  FROM promo\n  CROSS JOIN UNNEST(split(COALESCE(item_get, ''), ';')) AS t(pair)\n  WHERE pair <> ''\n  GROUP BY activity_topic, split_part(pair, ':', 1)\n)\nSELECT\n  pt.activity_topic,\n  pt.is_special,\n  pt.is_pay,\n  pt.user_count,\n  pt.event_count,\n  i.direction,\n  i.item_id,\n  i.amount\nFROM particip pt\nLEFT JOIN items i ON pt.activity_topic = i.activity_topic\nORDER BY pt.user_count DESC, i.direction, i.amount DESC",
+        "max_rows": 200,
+        "sql": "SELECT\n  COALESCE(json_extract_scalar(activity_topic, '$.cn'), activity_topic) AS activity_topic,\n  COUNT(DISTINCT role_id) AS user_count,\n  COUNT(*) AS event_count\nFROM gameeco_raw.v_presto_log_rolepromo\nWHERE game_id = '{game_id_str}'\n  AND ds BETWEEN '{analysis_start}' AND '{analysis_end}'\n  AND role_type = 1\n  {server_filter}\nGROUP BY COALESCE(json_extract_scalar(activity_topic, '$.cn'), activity_topic)\nORDER BY user_count DESC\nLIMIT 100",
         "columns": {
           "activity_topic": "活动主题",
-          "is_special": "精彩活动",
-          "is_pay": "充值活动",
           "user_count": "参与人数",
-          "event_count": "参与次数",
+          "event_count": "参与次数"
+        }
+      },
+      "segment_item_flow": {
+        "name": "分层×道具产销",
+        "max_rows": 5000,
+        "sql": "WITH per_role AS (\n  SELECT role_id, SUM(COALESCE(TRY_CAST(pay_money AS DOUBLE), 0)) AS total\n  FROM gamelog_raw.v_presto_log_payrecharge\n  WHERE game_id = {game_id}\n    AND ds BETWEEN '{analysis_start}' AND '{analysis_end}'\n    {server_filter}\n  GROUP BY role_id\n),\nseg AS (\n  SELECT role_id,\n    CASE\n      WHEN total < 10 THEN 1 WHEN total < 20 THEN 2 WHEN total < 40 THEN 3\n      WHEN total < 80 THEN 4 WHEN total < 100 THEN 5 WHEN total < 150 THEN 6\n      WHEN total < 200 THEN 7 WHEN total < 300 THEN 8 ELSE 9\n    END AS seg_no\n  FROM per_role\n)\nSELECT\n  s.seg_no,\n  CASE s.seg_no\n    WHEN 1 THEN '<$10' WHEN 2 THEN '$10~20' WHEN 3 THEN '$20~40'\n    WHEN 4 THEN '$40~80' WHEN 5 THEN '$80~100' WHEN 6 THEN '$100~150'\n    WHEN 7 THEN '$150~200' WHEN 8 THEN '$200~300' ELSE '>=$300'\n  END AS segment,\n  CASE r.change_type WHEN '1' THEN '产出' WHEN '2' THEN '消耗' ELSE r.change_type END AS direction,\n  r.item_id,\n  r.item_name,\n  COUNT(DISTINCT r.role_id) AS user_count,\n  COUNT(*) AS event_count,\n  SUM(ABS(CAST(r.status_after AS BIGINT) - CAST(r.status_before AS BIGINT))) AS amount\nFROM gameeco_raw.v_presto_log_roleitem r\nJOIN seg s ON r.role_id = s.role_id\nWHERE r.game_id = '{game_id_str}'\n  AND r.ds BETWEEN '{analysis_start}' AND '{analysis_end}'\n  AND r.role_type = 1\n  AND SUBSTR(CAST(r.server_id AS VARCHAR), 5, 1) != '4'\nGROUP BY s.seg_no, r.change_type, r.item_id, r.item_name\nORDER BY s.seg_no, direction, amount DESC",
+        "columns": {
+          "seg_no": "分层编号",
+          "segment": "分层",
           "direction": "方向",
           "item_id": "道具ID",
+          "item_name": "道具名称",
+          "user_count": "涉及人数",
+          "event_count": "变动次数",
           "amount": "数量"
-        },
-        "value_map": {
-          "is_special": {"1": "是", "0": "否"},
-          "is_pay": {"1": "是", "0": "否"}
         }
       }
     }
@@ -518,21 +532,11 @@ Create `app/templates/pay_activity.json`：
 }
 ```
 
-> 注意：Task 1 探针若显示 `gameeco_raw` 的 `game_id` 为 bigint，`game_id = '{game_id_str}'` 渲染为 `game_id = '312'` 依然正确（字面量被隐式转为整数，不影响谓词下推）；无需改 SQL。若探针确认存在 `role_type` 且需要过滤机器人角色，在 `promo` CTE 加 `AND role_type = 1`。
+> 注意：
+> - `segment_item_flow` 的 `{server_filter}` 只出现在 `per_role` CTE（payrecharge 侧）中；roleitem 侧测试服过滤必须写成带 `r.` 前缀的字面条件（JOIN 后不带前缀的 `server_id` 会歧义报错），这是有意为之，不要替换成占位符。
+> - `roleitem` 单日约 1600 万行；`status_before`/`status_after`/`change_type` 均为 varchar，聚合必须显式 `CAST(... AS BIGINT)`（隐式算术实测 6 分钟跑不完，显式 CAST 约 5 秒），不要"简化"掉 CAST。
+> - 冒烟时若 `role_type`/`server_id` 列在 roleitem 上报不存在，按探针实测修正（rolepromo 的 `role_type` 已确认为 integer 存在）。
 
-- [ ] **Step 4: 运行测试**
-
-Run: `python -m pytest tests/test_pay_activity_templates.py -v`
-Expected: 全部 PASS。
-
-- [ ] **Step 5: Commit**
-
-```bash
-git add app/templates/pay_activity.json tests/test_pay_activity_templates.py
-git commit -m "feat: 新增312付费构成与活动分析pay_activity模板(6 Sheet)
-
-Co-Authored-By: Claude <noreply@anthropic.com>"
-```
 
 ---
 
@@ -943,16 +947,17 @@ Co-Authored-By: Claude <noreply@anthropic.com>"
 
 模板文件：`app/templates/pay_activity.json`
 
-对指定日期（默认昨日单日）输出 6 个 Sheet：
+对指定日期（默认昨日单日）输出 7 个 Sheet：
 
 1. **付费概览**：DAU、付费人数、收入(USD)、付费率、ARPPU。
 2. **付费构成**：普通充值 vs 直购（按 actId 细分：14 新手直购 / 13 新月卡 / 9 天使通行证 / 7、8 商店）。
 3. **充值档位分布**：单笔金额档位（<$1 ~ ≥$100）的笔数/人数/金额。
 4. **付费用户分层**：按当日累计充值 9 档（<$10 / 10~20 / 20~40 / 40~80 / 80~100 / 100~150 / 150~200 / 200~300 / ≥$300）。
-5. **分层×活动参与**：分层 × 活动主题 × 消耗/产出 × 道具（`rolepromo.item_spend/item_get` 炸开，道具名由 name_enrich 补全）。
-6. **活动总览**：全量玩家当日全部活动（含精彩活动/充值活动标记），按参与人数排序。
+5. **分层×活动参与**：分层 × 活动主题（`json_extract_scalar(activity_topic,'$.cn')`）的参与人数/次数（`rolepromo` 领奖记录）。
+6. **活动总览**：全量玩家当日全部活动主题，按参与人数排序。
+7. **分层×道具产销**：分层 × 产出/消耗 × 道具（`roleitem`，数量=变动前后差绝对值合计，表自带道具名称）。
 
-口径：金额 USD；消耗/产出来自 `gameeco_raw.v_presto_log_rolepromo`；全部活动纳入不过滤。
+口径：金额 USD；活动参与来自 `gameeco_raw.v_presto_log_rolepromo`（其 `item_spend`/`item_get` 源码硬编码恒空，不可用）；道具产销来自 `gameeco_raw.v_presto_log_roleitem`（`change_type` '1'=产出 / '2'=消耗，varchar 数值列必须显式 `CAST(... AS BIGINT)`）；全部活动纳入不过滤。
 触发词：`付费构成`、`活动付费分析`、`付费活动分析`、`付费分层`。
 ```
 
@@ -972,17 +977,25 @@ Co-Authored-By: Claude <noreply@anthropic.com>"
 
 - [ ] **Step 3: 更新 `schema_312.md`**
 
-在 `rolepromo` 表说明处（约 987 行表格之后）追加 Task 1 探针的实测结论：
+在 `rolepromo` 表说明处（约 987 行表格之后）追加 Task 1 探针实测结论（以下内容逐字使用，已无占位符）：
 
 ```markdown
-> **实测补充（2026-07，pay_activity 探针确认）**：
-> - `item_spend` / `item_get` 格式为 `<实际格式，如 id:num;id:num>`；
-> - `game_id` 列类型为 `<varchar/bigint>`；`role_type` 列 `<存在/不存在>`；
-> - `activity_topic` 取值示例：`<列出 5-10 个实际主题>`；
-> - `activity_special = 1` 为精彩活动，`activity_pay = 1` 为充值活动。
+> **实测补充（2026-07-24，pay_activity 探针+源码确认）**：
+> - `item_spend` / `item_get` 恒为空：唯一调用点 `module_activity.go:2293` 硬编码传 `""`；2026-07 全月 170 万+ 行无一非空。**不要用这两个字段统计消耗/产出**（道具产销走 `v_presto_log_roleitem`）。
+> - `activity_special` / `activity_pay` 同处硬编码 `1` / `0`，不能作为精彩/付费活动标记。
+> - `activity_topic` 为多语言 JSON 字符串，中文名用 `json_extract_scalar(activity_topic, '$.cn')` 提取（示例："女神通行证升级福利"、"买一送一送豪礼"、"大亨积分奖励"、"王的财宝限定礼包"、"女神新集市购买礼包"）。
+> - `game_id` / `role_id` 为 varchar；`role_type` 为 integer（过滤真实玩家加 `role_type = 1`）。
+> - 该表记录的是"领取活动奖励"事件（`handle_ActivityFinish`）。
 ```
 
-（尖括号内容用 Task 1 实际输出替换。）
+并在 `roleitem` 表说明处（约 894 行表格之后）追加：
+
+```markdown
+> **实测补充（2026-07-24，pay_activity 探针确认）**：
+> - `change_type` 为 **varchar**：`'1'`=产出 / `'2'`=消耗，过滤必须加引号。
+> - `status_before` / `status_after` 为 **varchar**：聚合必须显式 `CAST(... AS BIGINT)`（隐式算术在 1600 万行/天上超 6 分钟跑不完，显式 CAST 约 5 秒）。单日变动量 = `SUM(ABS(CAST(status_after AS BIGINT) - CAST(status_before AS BIGINT)))`。
+> - `game_id` / `role_id` 为 varchar。
+```
 
 - [ ] **Step 4: Commit**
 
@@ -1029,11 +1042,11 @@ for p in sorted(Path(result_dir).glob("query_*.csv")):
     print(p.name, sum(1 for _ in open(p, encoding="utf-8-sig")), "rows")
 ```
 
-Expected: 6 个 CSV 均生成；Sheet 5/6 的"道具ID"列右侧出现"道具名称"列且有非空值；各 Sheet 行数合理（Sheet 1 一行，Sheet 4 ≤9 行）。若某 Sheet SQL 报错，按报错信息修正模板（常见问题：`item_spend` 格式不符 → 回 Task 4 调整炸开写法）。
+Expected: 7 个 CSV 均生成；Sheet 7 的"道具名称"列有非空值（roleitem 自带）；各 Sheet 行数合理（Sheet 1 一行，Sheet 4 ≤9 行）。若某 Sheet SQL 报错，按报错信息修正模板（已知敏感点：roleitem/rolepromo 的 `role_type` 列、`activity_topic` 非 JSON 值导致 `json_extract_scalar` 报错——后者可改为 `TRY_CAST` 式兜底或 `COALESCE` 包装）。
 
 - [ ] **Step 3: 触发词手工验证**
 
-确认本地 `config.json` 已含 `"pay_activity": [...]`（Task 5 Step 5），启动 bot 后在 312 绑定群发送"昨日付费构成"，观察：文字回复含数据概览 + 【经营解读】，附件 Excel 含 6 个 Sheet。
+确认本地 `config.json` 已含 `"pay_activity": [...]`（Task 5 Step 5），启动 bot 后在 312 绑定群发送"昨日付费构成"，观察：文字回复含数据概览 + 【经营解读】，附件 Excel 含 7 个 Sheet。
 
 - [ ] **Step 4: 最终提交（如有修正）**
 
@@ -1048,6 +1061,6 @@ Co-Authored-By: Claude <noreply@anthropic.com>"
 
 ## Self-Review 记录
 
-- **Spec 覆盖**：6 Sheet → Task 4；道具名补全（translate_dir 接线 + 中文表头 + fallback）→ Task 3/7；LLM 解读 + 失败兜底 → Task 6/7；触发词/报表注册 → Task 5；文档 → Task 8；实测探针（item_spend 格式/activity_topic/role_type）→ Task 1；验证 → Task 9。Spec 中"不改动 run_report 单 Sheet 容错"为非目标，无对应任务（符合）。
+- **Spec 覆盖**：7 Sheet → Task 4；道具名补全（translate_dir 接线 + 中文表头 + fallback，本报表 Sheet 7 自带 item_name，主要惠及 player_segment 及通用查询路径）→ Task 3/7；LLM 解读 + 失败兜底 → Task 6/7；触发词/报表注册 → Task 5；文档 → Task 8；实测探针 → Task 1（已完成并触发口径修订：rolepromo 消耗/产出字段恒空 → 改走 roleitem）；验证 → Task 9。Spec 中"不改动 run_report 单 Sheet 容错"为非目标，无对应任务（符合）。
 - **类型一致性**：`templates.run_report` 返回 `(summary, result_dir)` —— Task 2/4/5 一致；`report_insight.interpret(question, result_dir, ws)` —— Task 6 定义、Task 7 调用一致；`name_enrich.translate_dir(dir, game_config)` —— Task 3 不变签名、Task 7 调用一致。
-- **已知风险**：`item_spend`/`item_get` 格式未实测（Task 1 先行就是为了收敛此风险）；Sheet 5 行数可能接近 max_rows=5000，超出时 dataapi 截断——冒烟时确认行数。
+- **已知风险**：Sheet 7（分层×道具产销）行数可能接近 max_rows=5000，超出时 dataapi 截断——冒烟时确认行数；`json_extract_scalar` 对非 JSON 的 `activity_topic` 可能报错——冒烟验证。

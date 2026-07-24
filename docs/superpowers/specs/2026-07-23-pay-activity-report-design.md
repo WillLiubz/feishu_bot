@@ -18,7 +18,9 @@
 - 金额币种：**USD**（`payrecharge.pay_money`，`pay_currency` 实测全为 USD）。
 - 分层边界（按当日累计充值，互斥落一层）：
   `<$10`、`$10~20`、`$20~40`、`$40~80`、`$80~100`、`$100~150`、`$150~200`、`$200~300`、`≥$300`。
-- 消耗/产出口径：**活动参与日志口径**——`gameeco_raw.v_presto_log_rolepromo` 的 `item_spend`（活动内消耗）与 `item_get`（活动产出），不用 payconsume/paygift 总盘。
+- 消耗/产出口径：**道具产销流水口径**——`gameeco_raw.v_presto_log_roleitem`（`change_type = '1'` 产出 / `'2'` 消耗，按当日累计分层归属）。⚠ 原设计采用 rolepromo 的 `item_spend`/`item_get`，2026-07-24 实测+源码确认：该两字段在唯一调用点（`module_activity.go:2293`）硬编码传 `""`，全月 170 万+ 行无一非空；`activity_special`/`activity_pay` 同处硬编码 `1`/`0`，标记无意义。rolepromo 仅用于"活动参与"（领奖记录的人数/次数）。
+- **rolepromo 实测**（2026-07-24 探针）：`activity_topic` 为多语言 JSON 字符串，中文名需 `json_extract_scalar(activity_topic, '$.cn')` 提取；`game_id`/`role_id` 为 varchar；`role_type` 为 integer。
+- **roleitem 实测**（2026-07-24 探针）：`change_type`/`status_before`/`status_after` 均为 **varchar**；聚合必须显式 `CAST(... AS BIGINT)`（隐式算术在 1600 万行/天上 6 分钟跑不完，显式 CAST 约 5 秒）；表自带 `item_name`。
 - 付费构成维度：普通充值 vs 直购（多选结果，另含充值金额档位分布）。
 - **所有出现 item ID 的地方必须补中文道具名**（用户明确要求）。
 - 数值字段一律 `COALESCE(TRY_CAST(... AS DOUBLE), 0)`；312 过滤 `game_id = 312`、`SUBSTR(CAST(server_id AS VARCHAR), 5, 1) != '4'`；role_id 为 VARCHAR，过滤时加引号。
@@ -33,7 +35,7 @@
 
 仅配置 `games.312`。复用 `templates.compute_params` 的日期解析（默认昨日单日；支持"今日"、"7月15日"、绝对日期范围）。占位符沿用 `{analysis_start}` / `{analysis_end}` / `{game_id}` / `{server_filter}`。
 
-6 个 Sheet（顺序固定）：
+7 个 Sheet（顺序固定）：
 
 | # | key | Sheet 名 | 数据源 | 内容 |
 |---|---|---|---|---|
@@ -41,15 +43,11 @@
 | 2 | `pay_composition` | 付费构成 | `payrecharge` | 普通充值（`pay_itemid='0'`）vs 直购（`strpos(pay_itemid, ':') > 0`）；直购按 actId=`split_part(pay_itemid, ':', 1)` 细分（14=新手直购、13=新月卡、9=天使通行证、7/8=商店、其余=其他直购）。各行：类型、金额、人数、次数、金额占比 |
 | 3 | `pay_tiers` | 充值档位分布 | `payrecharge` | 按**单笔** `pay_money` 档位（<1 / 1~5 / 5~10 / 10~20 / 20~50 / 50~100 / ≥100 USD）：笔数、金额、人数 |
 | 4 | `payer_segments` | 付费用户分层 | `payrecharge` | 按**当日累计**充值落入上述 9 层：各层人数、金额、金额占比、层内 ARPPU |
-| 5 | `segment_activity` | 分层×活动参与 | `payrecharge` JOIN `gameeco_raw.v_presto_log_rolepromo` | 粒度=分层 × `activity_topic` × 方向(消耗/产出) × `item_id`：该层该活动参与人数、参与次数、道具数量合计，带精彩/付费活动标记 |
-| 6 | `activity_overview` | 活动总览 | `rolepromo` | 粒度=`activity_topic` × 方向 × `item_id`（全量玩家）：活动参与人数、参与次数、道具数量合计，带 `activity_special`（精彩活动）/ `activity_pay`（充值活动）标记，按参与人数排序，便于与运营日历对照 |
+| 5 | `segment_activity` | 分层×活动参与 | `payrecharge` JOIN `gameeco_raw.v_presto_log_rolepromo` | 粒度=分层 × 活动主题（`json_extract_scalar(activity_topic,'$.cn')`）：该层该活动参与人数、参与次数（rolepromo 为领奖记录，无消耗/产出字段） |
+| 6 | `activity_overview` | 活动总览 | `rolepromo` | 全量玩家：当日全部活动主题按参与人数排序（人数/次数），便于与运营日历对照 |
+| 7 | `segment_item_flow` | 分层×道具产销 | `payrecharge` JOIN `gameeco_raw.v_presto_log_roleitem` | 粒度=分层 × 方向（产出/消耗） × `item_id`：参与人数、变动次数、数量合计（`SUM(ABS(CAST(status_after AS BIGINT)-CAST(status_before AS BIGINT)))`），表自带 `item_name` |
 
-**item_spend / item_get 炸开**：Sheet 5/6 不直接展示打包字符串，而是在 SQL 中按分隔符炸开成道具行（`split` / `regexp_extract_all` / `split_part`，写法以实测格式为准），道具列名保留英文 `item_id`，供 name_enrich 翻译为中文道具名/资源名。两 Sheet 行数可能达数千行，需设 `max_rows` 上限并在超出时于 summary 中标注截断。
-
-> ⚠ 实施第一步必须先写 debug 脚本连真实库确认：
-> 1. `rolepromo.item_spend` / `item_get` 的确切格式（预计 `id:num;id:num`，待验证）；
-> 2. `activity_topic` 当日实际取值（用于与运营日历对照、确认是否需 value_map）；
-> 3. `rolepromo` 是否有 `role_type` 字段（schema 未标注，需 DESC/实测）。
+**道具名**：Sheet 7 的 `item_id` 行自带 `item_name`，无需翻译；其余 Sheet 不出现 item ID。name_enrich 的中文表头兼容与 game_resource fallback 作为通用能力保留（player_segment 等报表受益）。
 
 ### 2. 道具名补全（name_enrich 增强，`app/name_enrich.py` 改动）
 
